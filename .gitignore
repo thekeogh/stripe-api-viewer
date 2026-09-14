@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+certificates/
+public/monaco/
+*.tsbuildinfo
+*.log
+.env*
+.DS_Store
