@@ -24,6 +24,9 @@ type Props = {
   wordWrap: boolean;
   fullscreen: boolean;
   copied: boolean;
+  editable?: boolean;
+  locked?: boolean;
+  onChange?: (value: string) => void;
   onToggle: (key: "minimap" | "wordWrap" | "fullscreen") => void;
   onCopy: () => void;
   onDownload: () => void;
@@ -68,7 +71,8 @@ export default function JsonViewer(props: Props) {
     <>
       <div className="editor-toolbar">
         <div className="file-tab">
-          <span className="json-symbol">{"{ }"}</span> response.json{" "}
+          <span className="json-symbol">{"{ }"}</span>{" "}
+          {props.editable ? "request.json" : "response.json"}{" "}
           <span className="tab-dot" />
         </div>
         <div className="editor-actions">
@@ -144,36 +148,39 @@ export default function JsonViewer(props: Props) {
           >
             <Download size={16} />
           </button>
-          <button
-            type="button"
-            className="icon-button"
-            title={props.fullscreen ? "Exit expanded view" : "Expand viewer"}
-            aria-label={
-              props.fullscreen ? "Exit expanded view" : "Expand viewer"
-            }
-            aria-pressed={props.fullscreen}
-            onClick={() => props.onToggle("fullscreen")}
-          >
-            {props.fullscreen ? (
-              <Minimize2 size={16} />
-            ) : (
-              <Maximize2 size={16} />
-            )}
-          </button>
+          {!props.editable && (
+            <button
+              type="button"
+              className="icon-button"
+              title={props.fullscreen ? "Exit expanded view" : "Expand viewer"}
+              aria-label={
+                props.fullscreen ? "Exit expanded view" : "Expand viewer"
+              }
+              aria-pressed={props.fullscreen}
+              onClick={() => props.onToggle("fullscreen")}
+            >
+              {props.fullscreen ? (
+                <Minimize2 size={16} />
+              ) : (
+                <Maximize2 size={16} />
+              )}
+            </button>
+          )}
         </div>
       </div>
       <div className="editor-content">
-        {props.value ? (
+        {props.value || props.editable ? (
           <Editor
             height="100%"
             language="json"
             value={props.value}
             theme="vs-dark"
             onMount={onMount}
+            onChange={(value) => props.onChange?.(value ?? "")}
             loading={<div className="editor-loading">Opening JSON viewer…</div>}
             options={{
-              readOnly: true,
-              domReadOnly: true,
+              readOnly: !props.editable || props.locked,
+              domReadOnly: !props.editable || props.locked,
               automaticLayout: true,
               fontFamily: '"Ubuntu Sans Mono", monospace',
               fontSize: 13,
@@ -199,8 +206,10 @@ export default function JsonViewer(props: Props) {
               links: true,
               tabSize: 2,
               occurrencesHighlight: "singleFile",
-              renderValidationDecorations: "off",
-              ariaLabel: "Read-only Stripe JSON response",
+              renderValidationDecorations: props.editable ? "on" : "off",
+              ariaLabel: props.editable
+                ? "Stripe request JSON body"
+                : "Read-only Stripe JSON response",
             }}
           />
         ) : (

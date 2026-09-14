@@ -1,6 +1,6 @@
 # Stripe API Viewer
 
-A personal, read-only Stripe API explorer. Choose a resource and method, send a request, and inspect the raw response in a Monaco JSON viewer.
+A personal Stripe API workbench with separate **Reads** and **Writes** tabs, saved drafts, and Monaco JSON editors.
 
 ## Run locally
 
@@ -11,35 +11,61 @@ pnpm install
 pnpm start
 ```
 
-Your default browser opens **https://localhost:4387** automatically when the server is ready. The start script runs Next.js with `--experimental-https` and binds to localhost. On first launch, Next.js generates a local certificate; you may be prompted to trust it. If your browser warns about the certificate, trust it for this local app. To use another port, change `4387` in `package.json`. Set `BROWSER=none` to skip opening the browser.
+Your default browser opens **https://localhost:4387** when the server is ready. Next.js uses `--experimental-https` and binds to localhost. On first launch, you may need to trust its local certificate. Change `4387` in `package.json` to use another port. Set `BROWSER=none` to skip opening the browser.
 
-## Use it
+## Connection and reads
 
-1. Paste a Stripe secret key (`sk_test_…` / `sk_live_…`) or restricted key (`rk_…`) with permission to read the resources you need.
-2. Select a resource, then **List all**, **Retrieve**, or **Search** where supported. Fill in the resource ID or search query when prompted.
-3. Click **Send request** (or press **⌘/Ctrl + Enter**).
+Paste a Stripe secret or restricted key into **Connection**. This connection is shared by both tabs. Collapse the accordion to tuck it away; **More options** contains the connected account and API version (blank uses your account’s default). In Reads it also includes pagination cursors and additional query parameters, one unencoded `key=value` per line.
 
-Supports customers, subscriptions, products, prices, coupons, promotion codes, invoices, payment intents, charges, refunds, disputes, checkout sessions, balance, balance transactions, payouts, and events.
+Choose a resource and read method, then send a request. IDs and search queries appear when needed. List/search results support 1–100 objects per page and **Next page / First page** controls.
 
-- The workspace fills the browser between the header and footer. The fixed-width request panel scrolls independently, and the JSON viewer fills the remaining space. Narrow windows scroll horizontally to keep both panels usable.
-- The footer is a status bar: connection state, orange test mode or purple live mode, read-only status, last-request status/timing, and saved settings. Connection turns green after a successful request; a new or changed connection shows **Not verified** until you send one.
-- The JSON viewer includes syntax highlighting, folding, search, a minimap, word wrap, bracket guides, an expanded view, and copy/download buttons. Press **Escape** to exit the expanded view.
-- List and search results are paginated, with 1–100 objects per page. Use **Next page** for more results and **First page** to start over.
-- Collapse **Connection** to tuck away your saved key. Both its open/closed state and the nested **More options** accordion are remembered.
-- **Connection → More options** contains a pagination cursor, a connected account ID, an API version override, and additional query parameters. Leave the API version blank to use your account’s default.
-- Additional parameters use one unencoded `key=value` per line, such as `customer=cus_…` or `expand[]=data.customer`. Only use parameters supported by the selected endpoint; its reference is linked below the form. Repeated keys are supported.
-- Form values (including the API key), values for each resource/method, and viewer preferences are stored in this browser’s localStorage. **Forget** clears the saved key. Responses are not saved across reloads.
-- Stripe errors appear as JSON with the original HTTP status and request ID. Search uses [Stripe’s query syntax](https://docs.stripe.com/search#search-query-language); newly changed data may take time to become searchable.
+Reads cover customers, subscriptions, products, prices, coupons, promotion codes, invoices, payment intents, charges, refunds, disputes, checkout sessions, balance, balance transactions, payouts, and events. [Stripe search syntax](https://docs.stripe.com/search#search-query-language) applies to Search; recent changes may take time to appear.
 
-Requests pass through your local Next.js server to avoid browser CORS restrictions. The server only calls allowlisted Stripe endpoints using **GET**, even though the browser sends the local proxy a POST. The key is stored unencrypted in your browser and sent to the local server and Stripe; it is not written to a server-side file. This is a personal localhost tool, with no user accounts or authentication.
+## Writes
 
-Monaco is served locally from the installed package and uses Ubuntu Sans Mono. Fonts (Ubuntu Sans Mono, DM Sans, and JetBrains Mono) load from Google Fonts, so an internet connection is needed for fonts as well as Stripe requests.
+Select **Writes**, choose a resource/action, and edit the request JSON. Supported actions are create, update, delete, and cancel where Stripe offers them; balance, balance transactions, and events remain in Reads only. Some Stripe actions, such as capture or invoice finalization, are not included.
+
+For a product without a price, choose **Products → Create** and send:
+
+```json
+{
+  "name": "Arc Enterprise Unlimited"
+}
+```
+
+Requests use JSON objects, including nested objects and arrays. The app translates these into Stripe’s form encoding. Use an empty string to clear a supported field; JSON `null` is rejected. Delete bodies must be `{}`. Examples contain placeholder IDs where needed—replace them with your own. Refer to the linked endpoint documentation for fields supported by your API version.
+
+The editable request pane sits above the read-only response. Drag the divider, or focus it and use the arrow keys, to resize the panes. **⌘/Ctrl + Enter** submits from either workspace; it never bypasses a confirmation dialog.
+
+| Action          | Test mode     | Live mode                          |
+| --------------- | ------------- | ---------------------------------- |
+| Read            | Immediate     | Immediate                          |
+| Create / update | Immediate     | Review dialog + type `LIVE`        |
+| Delete / cancel | Review dialog | Review dialog + type the target ID |
+
+Live writes have a persistent warning. Dialogs show the action, endpoint, account, target, and exact body, and require an acknowledgement checkbox. The server checks the key’s mode and requires a single-use approval bound to the exact request; approvals expire after five minutes. Confirmations are never saved. A refresh never sends a write.
+
+### Duplicate protection
+
+POST requests use a saved **operation key** ([Stripe idempotency](https://docs.stripe.com/api/idempotent_requests)). Re-sending the unchanged request reuses its key, including after refresh. Formatting JSON or reordering object properties keeps the same key. Changing request values or the connection starts a different operation on the next send. Use **New operation** only if you intend to perform the same write again—for example, creating a second identical product.
+
+There are no automatic retries. After a timeout or network error, check Stripe: the write may already have completed. Keep the same key when retrying a POST. Keys older than 23 hours require reviewing Stripe and explicitly starting a new operation. Stripe does not deduplicate DELETE requests using these keys.
+
+## Workspace
+
+- Each tab keeps its own selections, drafts, and responses while switching. Form settings, write operation keys, viewer preferences, the selected tab, and divider position persist in this browser’s localStorage; responses do not survive refresh.
+- **Forget** clears the shared API key. Keys and drafts are stored unencrypted locally. Writes pause if their settings cannot be saved.
+- Monaco includes syntax highlighting, folding, search, minimap, word wrap, and copy/download controls. The response can expand; **Escape** exits.
+- The fixed-width sidebar scrolls independently. The footer shows connection state, test/live mode, read/write workspace, latest response status/timing, and saved settings. Green connection status follows a successful request in the current workspace.
+- Monaco is served locally and uses Ubuntu Sans Mono. Fonts load from Google Fonts.
+
+Requests pass through the local Next.js server to Stripe. The Reads route is GET-only; the separate Writes route permits only its supported endpoints/actions. This is a personal localhost tool without user accounts or authentication. Its confirmation dialogs protect against accidental actions in the UI; do not expose the server publicly.
 
 ## Other commands
 
 ```sh
-pnpm typecheck  # Check TypeScript
-pnpm build      # Verify a production build
+pnpm typecheck
+pnpm build
 ```
 
-Built with Next.js, React, TypeScript, and Monaco. Endpoint definitions follow [Stripe’s API reference](https://docs.stripe.com/api); local HTTPS uses [Next.js’s HTTPS option](https://nextjs.org/docs/app/api-reference/cli/next#using-https-during-development).
+Built with Next.js, React, TypeScript, and Monaco. See the [Stripe API reference](https://docs.stripe.com/api) and [Next.js HTTPS documentation](https://nextjs.org/docs/app/api-reference/cli/next#using-https-during-development).

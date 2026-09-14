@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import WriteWorkspace, { emptyWriteStatus } from "./write-workspace";
 import {
   useCallback,
   useEffect,
@@ -52,6 +53,7 @@ const emptyDraft = {
 };
 type Draft = typeof emptyDraft;
 type Settings = {
+  workspace: "reads" | "writes";
   apiKey: string;
   account: string;
   apiVersion: string;
@@ -65,6 +67,7 @@ type Settings = {
   fullscreen: boolean;
 };
 const defaults: Settings = {
+  workspace: "reads",
   apiKey: "",
   account: "",
   apiVersion: "",
@@ -98,6 +101,8 @@ function readSettings(raw: string): Settings {
   if (typeof data.connectionExpanded !== "boolean") {
     settings.connectionExpanded = !settings.apiKey.trim();
   }
+  if (data.workspace === "reads" || data.workspace === "writes")
+    settings.workspace = data.workspace;
   if (!resources.some((r) => r.id === settings.resource))
     settings.resource = "";
   for (const resource of resources) {
@@ -136,6 +141,7 @@ function formatBody(body: string) {
 export default function StripeViewer() {
   const [settings, setSettings] = useState<Settings>(defaults);
   const [ready, setReady] = useState(false);
+  const [writeStatus, setWriteStatus] = useState(emptyWriteStatus);
   const [storageWarning, setStorageWarning] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,7 +180,11 @@ export default function StripeViewer() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      if (
+        settings.workspace === "reads" &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key === "Enter"
+      ) {
         event.preventDefault();
         formRef.current?.requestSubmit();
       }
@@ -183,7 +193,7 @@ export default function StripeViewer() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [settings.workspace]);
 
   useEffect(() => {
     if (settings.fullscreen) responseRef.current?.focus();
@@ -278,7 +288,7 @@ export default function StripeViewer() {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || !ready) return;
+    if (busy || !ready || settings.workspace !== "reads") return;
     if (!settings.apiKey.trim()) {
       update("connectionExpanded", true);
       setError("Paste your Stripe API key to get started.");
@@ -313,11 +323,25 @@ export default function StripeViewer() {
     lastRequest &&
     JSON.stringify(lastRequest) === JSON.stringify(currentRequest);
   const isSuccess = response && response.status >= 200 && response.status < 300;
+  const statusResponse =
+    settings.workspace === "writes" ? writeStatus.response : response;
+  const statusRequest =
+    settings.workspace === "writes" ? writeStatus.request : lastRequest;
+  const statusBusy = settings.workspace === "writes" ? writeStatus.busy : busy;
+  const statusError =
+    settings.workspace === "writes" ? writeStatus.error : error;
+  const statusSuccess =
+    statusResponse &&
+    statusResponse.status >= 200 &&
+    statusResponse.status < 300;
+  const activeStorageWarning =
+    storageWarning ||
+    (settings.workspace === "writes" ? writeStatus.storageWarning : "");
   const sameConnection =
-    lastRequest &&
-    lastRequest.apiKey.trim() === settings.apiKey.trim() &&
-    lastRequest.account.trim() === settings.account.trim() &&
-    lastRequest.apiVersion.trim() === settings.apiVersion.trim();
+    statusRequest &&
+    statusRequest.apiKey.trim() === settings.apiKey.trim() &&
+    statusRequest.account.trim() === settings.account.trim() &&
+    statusRequest.apiVersion.trim() === settings.apiVersion.trim();
   let connection = settings.apiKey.trim()
     ? {
         label: "Not verified",
@@ -335,26 +359,26 @@ export default function StripeViewer() {
       tone: "neutral",
       detail: "Restoring your saved connection settings.",
     };
-  } else if (busy) {
+  } else if (statusBusy) {
     connection = {
       label: "Connecting",
       tone: "pending",
       detail: "Waiting for Stripe to respond.",
     };
-  } else if (sameConnection && response) {
-    if (isSuccess)
+  } else if (sameConnection && statusResponse) {
+    if (statusSuccess)
       connection = {
         label: "Connected",
         tone: "success",
         detail: "Your latest request succeeded with these connection settings.",
       };
-    else if (response.status === 401)
+    else if (statusResponse.status === 401)
       connection = {
         label: "Disconnected",
         tone: "danger",
         detail: "Stripe rejected the API key. Check your connection settings.",
       };
-    else if (response.status === 403)
+    else if (statusResponse.status === 403)
       connection = {
         label: "Access denied",
         tone: "warning",
@@ -366,8 +390,12 @@ export default function StripeViewer() {
         tone: "warning",
         detail: "Stripe returned an error. See the response for details.",
       };
-  } else if (sameConnection && error) {
-    connection = { label: "Request failed", tone: "danger", detail: error };
+  } else if (sameConnection && statusError) {
+    connection = {
+      label: "Request failed",
+      tone: "danger",
+      detail: statusError,
+    };
   }
   const mode = /^(sk|rk)_live_/.test(settings.apiKey.trim())
     ? "Live mode"
@@ -405,6 +433,167 @@ export default function StripeViewer() {
     void runRequest({ ...lastRequest, cursor: nextCursor });
   }
 
+  const connectionPanel = (
+    <section className="connection-section">
+      <button
+        type="button"
+        className="section-label connection-toggle"
+        aria-expanded={settings.connectionExpanded}
+        aria-controls="connection-options"
+        onClick={() => {
+          update("connectionExpanded", !settings.connectionExpanded);
+          setShowKey(false);
+        }}
+      >
+        <span>01</span> CONNECTION{" "}
+        <ChevronDown
+          size={15}
+          className={settings.connectionExpanded ? "rotated" : ""}
+        />
+      </button>
+      {settings.connectionExpanded && (
+        <div id="connection-options">
+          <div className="connection-fields">
+            <label htmlFor="api-key">
+              Secret API key <KeyRound size={13} />
+            </label>
+            <div className="password-field">
+              <input
+                id="api-key"
+                type={showKey ? "text" : "password"}
+                value={settings.apiKey}
+                onChange={(e) => update("apiKey", e.target.value)}
+                placeholder="sk_test_… or sk_live_…"
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+              <button
+                type="button"
+                className="reveal-button"
+                aria-label={showKey ? "Hide API key" : "Show API key"}
+                onClick={() => setShowKey(!showKey)}
+              >
+                {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            <div className="key-note">
+              <LockKeyhole size={12} />
+              <span>Saved in this browser, including your key.</span>
+              {settings.apiKey && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    update("apiKey", "");
+                    setShowKey(false);
+                  }}
+                  className="text-button"
+                >
+                  Forget
+                </button>
+              )}
+            </div>
+          </div>
+          <section className="advanced-section">
+            <button
+              type="button"
+              className="advanced-toggle"
+              aria-expanded={settings.advanced}
+              aria-controls="advanced-options"
+              onClick={() => update("advanced", !settings.advanced)}
+            >
+              <SlidersHorizontal size={14} /> More options{" "}
+              <ChevronDown
+                size={14}
+                className={settings.advanced ? "rotated" : ""}
+              />
+            </button>
+            {settings.advanced && (
+              <div id="advanced-options" className="advanced-fields">
+                {settings.workspace === "reads" &&
+                  method &&
+                  method !== "retrieve" && (
+                    <>
+                      <label htmlFor="cursor">
+                        {method === "search" ? "Page token" : "Starting after"}
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => updateDraft("cursor", "")}
+                        >
+                          Reset
+                        </button>
+                      </label>
+                      <input
+                        id="cursor"
+                        value={draft.cursor}
+                        onChange={(e) => updateDraft("cursor", e.target.value)}
+                        placeholder={
+                          method === "search"
+                            ? "Optional next_page token"
+                            : "Optional previous object ID"
+                        }
+                        spellCheck={false}
+                      />
+                    </>
+                  )}
+                <label htmlFor="account">
+                  Connected account <span>OPTIONAL</span>
+                </label>
+                <input
+                  id="account"
+                  value={settings.account}
+                  onChange={(e) => update("account", e.target.value)}
+                  placeholder="acct_…"
+                  spellCheck={false}
+                />
+                <label htmlFor="api-version">
+                  API version <span>OPTIONAL</span>
+                </label>
+                <input
+                  id="api-version"
+                  value={settings.apiVersion}
+                  onChange={(e) => update("apiVersion", e.target.value)}
+                  placeholder="Your account’s default version"
+                  spellCheck={false}
+                />
+                {settings.workspace === "reads" && method && (
+                  <>
+                    <label htmlFor="parameters">
+                      Additional parameters <CircleHelp size={13} />
+                    </label>
+                    <textarea
+                      id="parameters"
+                      value={draft.parameters}
+                      onChange={(e) =>
+                        updateDraft("parameters", e.target.value)
+                      }
+                      placeholder={
+                        method === "retrieve"
+                          ? "expand[]=customer"
+                          : "customer=cus_…\nexpand[]=data.customer"
+                      }
+                      rows={3}
+                      spellCheck={false}
+                    />
+                    <p className="field-hint">
+                      One key=value per line, without URL encoding. Use
+                      parameters supported by this endpoint.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+  function switchWorkspace(workspace: "reads" | "writes") {
+    if (busy || writeStatus.busy || !ready) return;
+    setSettings((current) => ({ ...current, workspace, fullscreen: false }));
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -417,9 +606,49 @@ export default function StripeViewer() {
           </span>
           <span className="personal-tag">PERSONAL TOOL</span>
         </a>
+        <nav
+          className="workspace-tabs"
+          role="tablist"
+          aria-label="API workspace"
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const next = settings.workspace === "reads" ? "writes" : "reads";
+            switchWorkspace(next);
+            document.getElementById(next + "-tab")?.focus();
+          }}
+        >
+          <button
+            id="reads-tab"
+            type="button"
+            role="tab"
+            aria-controls="reads-panel"
+            aria-selected={settings.workspace === "reads"}
+            tabIndex={settings.workspace === "reads" ? 0 : -1}
+            disabled={!ready || busy || writeStatus.busy}
+            onClick={() => switchWorkspace("reads")}
+          >
+            Reads
+          </button>
+          <button
+            id="writes-tab"
+            type="button"
+            role="tab"
+            aria-controls="writes-panel"
+            aria-selected={settings.workspace === "writes"}
+            tabIndex={settings.workspace === "writes" ? 0 : -1}
+            disabled={!ready || busy || writeStatus.busy}
+            onClick={() => switchWorkspace("writes")}
+          >
+            Writes
+          </button>
+        </nav>
         <div className="topbar-right">
           <span className="readonly-pill">
-            <ShieldCheck size={14} /> Read-only by design
+            <ShieldCheck size={14} />{" "}
+            {settings.workspace === "reads"
+              ? "Read-only requests"
+              : "Protected write actions"}
           </span>
           <a
             href="https://docs.stripe.com/api"
@@ -434,7 +663,13 @@ export default function StripeViewer() {
 
       <main className="main">
         <h1 className="sr-only">Stripe API Viewer</h1>
-        <div className="workspace">
+        <div
+          className="workspace"
+          id="reads-panel"
+          role="tabpanel"
+          aria-labelledby="reads-tab"
+          hidden={settings.workspace !== "reads"}
+        >
           <aside className="request-panel">
             <div className="panel-heading">
               <span className="heading-icon">
@@ -445,176 +680,7 @@ export default function StripeViewer() {
             </div>
             <form ref={formRef} onSubmit={submit}>
               <fieldset disabled={!ready || busy}>
-                <section className="connection-section">
-                  <button
-                    type="button"
-                    className="section-label connection-toggle"
-                    aria-expanded={settings.connectionExpanded}
-                    aria-controls="connection-options"
-                    onClick={() => {
-                      update(
-                        "connectionExpanded",
-                        !settings.connectionExpanded,
-                      );
-                      setShowKey(false);
-                    }}
-                  >
-                    <span>01</span> CONNECTION{" "}
-                    <ChevronDown
-                      size={15}
-                      className={settings.connectionExpanded ? "rotated" : ""}
-                    />
-                  </button>
-                  {settings.connectionExpanded && (
-                    <div id="connection-options">
-                      <div className="connection-fields">
-                        <label htmlFor="api-key">
-                          Secret API key <KeyRound size={13} />
-                        </label>
-                        <div className="password-field">
-                          <input
-                            id="api-key"
-                            type={showKey ? "text" : "password"}
-                            value={settings.apiKey}
-                            onChange={(e) => update("apiKey", e.target.value)}
-                            placeholder="sk_test_… or sk_live_…"
-                            autoComplete="off"
-                            spellCheck={false}
-                            required
-                          />
-                          <button
-                            type="button"
-                            className="reveal-button"
-                            aria-label={
-                              showKey ? "Hide API key" : "Show API key"
-                            }
-                            onClick={() => setShowKey(!showKey)}
-                          >
-                            {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                          </button>
-                        </div>
-                        <div className="key-note">
-                          <LockKeyhole size={12} />
-                          <span>
-                            Saved in this browser, including your key.
-                          </span>
-                          {settings.apiKey && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                update("apiKey", "");
-                                setShowKey(false);
-                              }}
-                              className="text-button"
-                            >
-                              Forget
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <section className="advanced-section">
-                        <button
-                          type="button"
-                          className="advanced-toggle"
-                          aria-expanded={settings.advanced}
-                          aria-controls="advanced-options"
-                          onClick={() => update("advanced", !settings.advanced)}
-                        >
-                          <SlidersHorizontal size={14} /> More options{" "}
-                          <ChevronDown
-                            size={14}
-                            className={settings.advanced ? "rotated" : ""}
-                          />
-                        </button>
-                        {settings.advanced && (
-                          <div
-                            id="advanced-options"
-                            className="advanced-fields"
-                          >
-                            {method && method !== "retrieve" && (
-                              <>
-                                <label htmlFor="cursor">
-                                  {method === "search"
-                                    ? "Page token"
-                                    : "Starting after"}
-                                  <button
-                                    type="button"
-                                    className="text-button"
-                                    onClick={() => updateDraft("cursor", "")}
-                                  >
-                                    Reset
-                                  </button>
-                                </label>
-                                <input
-                                  id="cursor"
-                                  value={draft.cursor}
-                                  onChange={(e) =>
-                                    updateDraft("cursor", e.target.value)
-                                  }
-                                  placeholder={
-                                    method === "search"
-                                      ? "Optional next_page token"
-                                      : "Optional previous object ID"
-                                  }
-                                  spellCheck={false}
-                                />
-                              </>
-                            )}
-                            <label htmlFor="account">
-                              Connected account <span>OPTIONAL</span>
-                            </label>
-                            <input
-                              id="account"
-                              value={settings.account}
-                              onChange={(e) =>
-                                update("account", e.target.value)
-                              }
-                              placeholder="acct_…"
-                              spellCheck={false}
-                            />
-                            <label htmlFor="api-version">
-                              API version <span>OPTIONAL</span>
-                            </label>
-                            <input
-                              id="api-version"
-                              value={settings.apiVersion}
-                              onChange={(e) =>
-                                update("apiVersion", e.target.value)
-                              }
-                              placeholder="Your account’s default version"
-                              spellCheck={false}
-                            />
-                            {method && (
-                              <>
-                                <label htmlFor="parameters">
-                                  Additional parameters <CircleHelp size={13} />
-                                </label>
-                                <textarea
-                                  id="parameters"
-                                  value={draft.parameters}
-                                  onChange={(e) =>
-                                    updateDraft("parameters", e.target.value)
-                                  }
-                                  placeholder={
-                                    method === "retrieve"
-                                      ? "expand[]=customer"
-                                      : "customer=cus_…\nexpand[]=data.customer"
-                                  }
-                                  rows={3}
-                                  spellCheck={false}
-                                />
-                                <p className="field-hint">
-                                  One key=value per line, without URL encoding.
-                                  Use parameters supported by this endpoint.
-                                </p>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </section>
-                    </div>
-                  )}
-                </section>
+                {settings.workspace === "reads" && connectionPanel}
 
                 <section className="form-section endpoint-section">
                   <div className="section-label">
@@ -938,6 +1004,19 @@ export default function StripeViewer() {
             </div>
           </section>
         </div>
+        <WriteWorkspace
+          active={settings.workspace === "writes"}
+          connection={{
+            apiKey: settings.apiKey,
+            account: settings.account,
+            apiVersion: settings.apiVersion,
+          }}
+          connectionPanel={
+            settings.workspace === "writes" ? connectionPanel : null
+          }
+          onMissingKey={() => update("connectionExpanded", true)}
+          onStatus={setWriteStatus}
+        />
       </main>
       <footer className="footer" aria-label="Workspace status">
         <div className="statusbar-group">
@@ -946,7 +1025,7 @@ export default function StripeViewer() {
             title={connection.detail}
             role="status"
           >
-            {busy ? (
+            {statusBusy ? (
               <LoaderCircle size={12} className="spin" />
             ) : (
               <span className="statusbar-dot" />
@@ -964,7 +1043,8 @@ export default function StripeViewer() {
           )}
           <span className="statusbar-divider" />
           <span className="statusbar-label muted">
-            <ShieldCheck size={12} /> Read only
+            <ShieldCheck size={12} />{" "}
+            {settings.workspace === "reads" ? "Read only" : "Writes enabled"}
           </span>
           {settings.account.trim() && (
             <span
@@ -977,26 +1057,30 @@ export default function StripeViewer() {
           )}
         </div>
         <div className="statusbar-group">
-          {response && (
+          {statusResponse && (
             <span
-              className={`statusbar-label ${isSuccess ? "success" : "danger"}`}
-              title={`Last response: ${response.status} ${response.statusText}`}
+              className={`statusbar-label ${statusSuccess ? "success" : "danger"}`}
+              title={`Last response: ${statusResponse.status} ${statusResponse.statusText}`}
             >
-              Last request: {response.status}
+              Last request: {statusResponse.status}
               <span className="statusbar-meta">
-                {response.duration.toLocaleString()} ms
+                {statusResponse.duration.toLocaleString()} ms
               </span>
             </span>
           )}
           <span
-            className={`statusbar-label ${storageWarning ? "warning" : "muted"}`}
+            className={`statusbar-label ${activeStorageWarning ? "warning" : "muted"}`}
             title={
-              storageWarning ||
+              activeStorageWarning ||
               "Form values and preferences are saved in this browser"
             }
           >
-            {storageWarning ? <CircleHelp size={12} /> : <Check size={12} />}
-            {storageWarning
+            {activeStorageWarning ? (
+              <CircleHelp size={12} />
+            ) : (
+              <Check size={12} />
+            )}
+            {activeStorageWarning
               ? "Settings not saved"
               : ready
                 ? "Settings saved"

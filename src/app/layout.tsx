@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./writes.css";
 
 export const metadata: Metadata = {
   title: "Stripe API Viewer",
   description:
-    "A little clarity for your Stripe data. A personal, read-only API explorer.",
+    "A personal Stripe API explorer with separate read and protected write workspaces.",
 };
 
 export default function RootLayout({
