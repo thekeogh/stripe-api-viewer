@@ -1,0 +1,35 @@
+.editor-toolbar:has(.editor-convert) {
+  flex-wrap: wrap;
+}
+.editor-toolbar:has(.editor-convert) .editor-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-height: 42px;
+}
+.editor-convert {
+  gap: 6px;
+  margin-right: 7px;
+  padding: 6px 8px;
+  border: 1px solid #635484;
+  border-radius: 5px;
+  background: #352e49;
+  color: #d5c5f4;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.editor-convert:hover:enabled {
+  background: #463a60;
+  color: #eee4ff;
+}
+.editor-convert:disabled {
+  opacity: 0.4;
+}
+.editor-conversion-error {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  background: #3d2936;
+  color: #f3bacb;
+  border-bottom: 1px solid #64404f;
+  font-size: 12px;
+  line-height: 1.6;
+}

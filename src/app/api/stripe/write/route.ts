@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
       "action",
       "objectId",
       "body",
-      "idempotencyKey",
+      "submissionId",
     ] as const;
     if (fields.some((field) => typeof data[field] !== "string"))
       throw new Error("Invalid write fields.");
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       approval = checkApproval(data.approvalToken, input);
     }
     operation = createHash("sha256")
-      .update(`${input.apiKey}:${input.account}:${input.idempotencyKey}`)
+      .update(`${input.apiKey}:${input.account}:${input.submissionId}`)
       .digest("hex");
     if (inFlight.has(operation))
       return fail(
@@ -135,8 +135,7 @@ export async function POST(request: NextRequest) {
     stripeHeaders["Stripe-Account"] = input.account.trim();
   if (input.apiVersion.trim())
     stripeHeaders["Stripe-Version"] = input.apiVersion.trim();
-  if (prepared.method === "POST")
-    stripeHeaders["Idempotency-Key"] = input.idempotencyKey;
+  // Deliberately omit Idempotency-Key: every submit is a fresh Stripe request.
   // Subscription cancellation uses DELETE with optional parameters in the query.
   const path =
     prepared.method === "DELETE" && prepared.encoded.size
@@ -168,7 +167,7 @@ export async function POST(request: NextRequest) {
     );
   } catch {
     return fail(
-      "No response was received. Stripe may have applied this write. Check the object before continuing. POST retries with the same operation key are deduplicated; no automatic retry was made.",
+      "No response was received. Stripe may have applied this write. Submitting again sends a new request and may repeat the action. Check Stripe before continuing; no automatic retry was made.",
       502,
     );
   } finally {

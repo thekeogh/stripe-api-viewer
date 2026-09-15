@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { convertToJson } from "@/lib/convert-json";
 import Editor, { loader, type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import {
@@ -14,6 +15,7 @@ import {
   Search,
   WrapText,
   Map,
+  WandSparkles,
 } from "lucide-react";
 
 loader.config({ paths: { vs: "/monaco" } });
@@ -27,6 +29,7 @@ type Props = {
   editable?: boolean;
   locked?: boolean;
   onChange?: (value: string) => void;
+  onNotice?: (message: string) => void;
   onToggle: (key: "minimap" | "wordWrap" | "fullscreen") => void;
   onCopy: () => void;
   onDownload: () => void;
@@ -34,8 +37,14 @@ type Props = {
 
 export default function JsonViewer(props: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
+  const [conversionError, setConversionError] = useState<{
+    source: string;
+    message: string;
+  } | null>(null);
   const onMount: OnMount = (instance, monaco) => {
     editorRef.current = instance;
+    setEditorReady(true);
     monaco.editor.defineTheme("stripe-night", {
       base: "vs-dark",
       inherit: true,
@@ -67,6 +76,38 @@ export default function JsonViewer(props: Props) {
     void editorRef.current?.getAction(id)?.run();
   }
 
+  function convert() {
+    const instance = editorRef.current;
+    const model = instance?.getModel();
+    if (!props.editable || props.locked || !instance || !model) return;
+    const original = model.getValue();
+    try {
+      const result = convertToJson(original);
+      setConversionError(null);
+      if (result !== original) {
+        instance.pushUndoStop();
+        instance.executeEdits("convert-to-json", [
+          { range: model.getFullModelRange(), text: result },
+        ]);
+        instance.pushUndoStop();
+      }
+      instance.focus();
+      props.onNotice?.(
+        result === original
+          ? "Already clean JSON."
+          : "Converted to JSON. Use ⌘/Ctrl+Z in the editor to undo.",
+      );
+    } catch (error) {
+      setConversionError({
+        source: original,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not convert this object. Your text has not changed.",
+      });
+    }
+  }
+
   return (
     <>
       <div className="editor-toolbar">
@@ -76,6 +117,17 @@ export default function JsonViewer(props: Props) {
           <span className="tab-dot" />
         </div>
         <div className="editor-actions">
+          {props.editable && (
+            <button
+              type="button"
+              className="editor-convert"
+              disabled={props.locked || !props.value.trim() || !editorReady}
+              onClick={convert}
+              title="Quote keys and expressions, remove trailing commas, and format JSON. Never executes code."
+            >
+              <WandSparkles size={14} /> Convert to JSON
+            </button>
+          )}
           <button
             type="button"
             className="icon-button"
@@ -168,6 +220,11 @@ export default function JsonViewer(props: Props) {
           )}
         </div>
       </div>
+      {props.editable && conversionError?.source === props.value && (
+        <div className="editor-conversion-error" role="alert">
+          {conversionError.message} Your text has not changed.
+        </div>
+      )}
       <div className="editor-content">
         {props.value || props.editable ? (
           <Editor

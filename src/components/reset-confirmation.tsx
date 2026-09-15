@@ -38,8 +38,8 @@ export default function ResetConfirmation({
       <div id="reset-description">
         <p>
           This permanently deletes your API key, connection settings, all read
-          and write drafts, request bodies, responses, write history, operation
-          keys, and remembered UI preferences.
+          and write drafts, request bodies, responses, write history, legacy
+          operation keys, and remembered UI preferences.
         </p>
         <p>
           Local storage, session storage, IndexedDB databases, and app caches at
@@ -48,8 +48,7 @@ export default function ResetConfirmation({
         </p>
         <p>
           <strong>This cannot be undone.</strong> Nothing in Stripe is deleted
-          or reversed, including requests already sent. Saved retry protections
-          are also lost.
+          or reversed, including requests already sent.
         </p>
       </div>
       <label htmlFor="reset-confirmation">

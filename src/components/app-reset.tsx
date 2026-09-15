@@ -5,6 +5,7 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 import StripeViewer from "./stripe-viewer";
 import { RESET_KEY, resetAppStorage } from "@/lib/reset-app";
 import { closeWriteHistoryForReset } from "@/lib/write-history";
+import { closeReadTabsForReset } from "@/lib/read-tabs";
 
 export default function AppReset() {
   const [phase, setPhase] = useState<
@@ -18,6 +19,7 @@ export default function AppReset() {
     function pause() {
       stopped.current = true;
       void closeWriteHistoryForReset();
+      void closeReadTabsForReset();
       setPhase("paused");
       setMessage(
         "A reset was started in another tab or interrupted. Close other copies of this app before finishing the reset here.",

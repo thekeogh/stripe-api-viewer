@@ -1,6 +1,5 @@
 import {
   keyMode,
-  writeFingerprintSource,
   writeLabels,
   writeResources,
   type WriteAction,
@@ -27,7 +26,6 @@ export type HistoryRequest = {
   body: string;
   account: string;
   apiVersion: string;
-  operation: { fingerprint: string; key: string; created: number };
 };
 export type HistoryEntry = { record: HistoryRecord; request: HistoryRequest };
 let database: Promise<IDBDatabase> | undefined;
@@ -112,16 +110,7 @@ function notify() {
 
 export async function saveWriteHistory(
   input: WriteInput,
-  operationCreated: number,
 ): Promise<HistoryRecord> {
-  const { idempotencyKey, ...base } = input;
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(writeFingerprintSource(base)),
-  );
-  const fingerprint = Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
   const resource = writeResources.find((r) => r.id === input.resource)!;
   const body = JSON.parse(input.body);
   const description =
@@ -149,7 +138,6 @@ export async function saveWriteHistory(
     body: input.body,
     account: input.account,
     apiVersion: input.apiVersion,
-    operation: { fingerprint, key: idempotencyKey, created: operationCreated },
   };
   await transaction<void>(["records", "requests"], "readwrite", (tx) => {
     tx.objectStore("records").add(record);

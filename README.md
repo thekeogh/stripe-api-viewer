@@ -23,6 +23,14 @@ Choose a resource and read method, then send a request. IDs and search queries a
 
 Reads cover customers, subscriptions, products, prices, coupons, promotion codes, invoices, payment intents, charges, refunds, disputes, checkout sessions, balance, balance transactions, payouts, and events. [Stripe search syntax](https://docs.stripe.com/search#search-query-language) applies to Search; recent changes may take time to appear.
 
+### Read tabs
+
+Use **+** above the response viewer to open a blank request tab. Each tab remembers its endpoint form, expansions, pagination, viewer preferences, and latest response—including the JSON body and status—across refreshes and browser restarts. The API key, connected account, and API version remain shared. Your existing read form becomes the first tab when upgrading.
+
+Tab labels follow the resource and object ID. Switch tabs to compare responses without sending anything; requests can finish in the background in their original tab. **×** closes a tab and permanently removes its saved form and response. Closing the last tab leaves one blank tab. Use Left/Right or Home/End on the tab bar to switch tabs, and Delete to close one.
+
+Read tabs and response bodies are saved locally in IndexedDB, without copying the API key into each tab. The footer shows saving errors; use **Retry saving tabs** if storage fills up or fails. Wait for saving to finish before closing the browser. **Reset everything** also deletes all read tabs.
+
 ## Writes
 
 Select **Writes**, choose a resource/action, and edit the request JSON. Supported actions are create, update, delete, and cancel where Stripe offers them; balance, balance transactions, and events remain in Reads only. Some Stripe actions, such as capture or invoice finalization, are not included.
@@ -39,6 +47,8 @@ Requests use JSON objects, including nested objects and arrays. The app translat
 
 The editable request pane sits above the read-only response. Drag the divider, or focus it and use the arrow keys, to resize the panes. **⌘/Ctrl + Enter** submits from either workspace; it never bypasses a confirmation dialog.
 
+Paste a JavaScript-style object into the request editor and click **Convert to JSON** to quote keys, remove comments and trailing commas, and apply two-space indentation. Expressions such as `input.company` become ordinary strings; numbers, booleans, and null stay their original types. Conversion happens locally without executing code or sending a request, and **⌘/Ctrl+Z** undoes it. Unsupported structures (such as spreads or computed keys) and invalid syntax leave your text unchanged with an error.
+
 | Action          | Test mode     | Live mode                          |
 | --------------- | ------------- | ---------------------------------- |
 | Read            | Immediate     | Immediate                          |
@@ -47,11 +57,11 @@ The editable request pane sits above the read-only response. Drag the divider, o
 
 Live writes have a persistent warning. Dialogs show the action, endpoint, account, target, and exact body, and require an acknowledgement checkbox. The server checks the key’s mode and requires a single-use approval bound to the exact request; approvals expire after five minutes. Confirmations are never saved. A refresh never sends a write.
 
-### Duplicate protection
+### Every submit is a new request
 
-POST requests use a saved **operation key** ([Stripe idempotency](https://docs.stripe.com/api/idempotent_requests)). Re-sending the unchanged request reuses its key, including after refresh. Formatting JSON or reordering object properties keeps the same key. Changing request values or the connection starts a different operation on the next send. Use **New operation** only if you intend to perform the same write again—for example, creating a second identical product.
+Writes do **not** send a Stripe `Idempotency-Key` header. Every submit makes a fresh request, even with identical fields, after refreshing, or when loading an old history entry. Old saved operation keys are ignored. Repeated submits can create duplicate objects or repeat charges; Stripe’s normal endpoint validation still applies.
 
-There are no automatic retries. After a timeout or network error, check Stripe: the write may already have completed. Keep the same key when retrying a POST. Keys older than 23 hours require reviewing Stripe and explicitly starting a new operation. Stripe does not deduplicate DELETE requests using these keys.
+There are no automatic retries. After a timeout or network error, check Stripe before submitting again: the previous write may already have completed. Live-mode and destructive-action confirmations remain in place, and the UI blocks simultaneous submits while a request is in progress.
 
 ### Write history
 
@@ -59,17 +69,17 @@ Click **History** at the top right of Writes to open the animated sidebar. Its o
 
 Entries are grouped by resource, newest first, with the action, test/live mode, result, and timestamp. Default names include the action and object ID or name (for example, **Update subscription · sub\_…**); use the pencil button to rename an entry. **Load older requests** retrieves more without loading all request bodies into memory.
 
-Select an entry to restore its resource, action, object ID, JSON body, account, and API version. Loading never sends it, changes your API key, or bypasses confirmations. The original operation key is restored, so the existing retry protections still apply when using the same connection. Use **New operation** deliberately if you want to send it as a new write.
+Select an entry to restore its resource, action, object ID, JSON body, account, and API version. Loading never sends it, changes your API key, or bypasses confirmations. Submitting a loaded entry always sends a fresh request, without reusing any old operation key.
 
-Use an entry’s trash button to delete it, or **Delete all** to wipe the entire saved history, including older entries. Both ask for confirmation and permanently remove local history only—not Stripe objects. Your current form, connection settings, and retry protections remain unchanged.
+Use an entry’s trash button to delete it, or **Delete all** to wipe the entire saved history, including older entries. Both ask for confirmation and permanently remove local history only—not Stripe objects. Your current form and connection settings remain unchanged.
 
 History stores request bodies and result metadata, not response bodies, API keys, or confirmation tokens. It stays in this browser and is removed if you clear this site’s data. If a request cannot be recorded, it is not sent. **Unverified** means no final result was recorded; check Stripe before retrying.
 
 ## Workspace
 
-The red **Reset everything** button in the header returns the app to a fresh state. Type **RESET** in the confirmation dialog to permanently erase the saved API key, connection settings, all drafts and request bodies, history, operation keys, and UI preferences. It clears localStorage, sessionStorage, IndexedDB, and Cache Storage for this app’s address, then reloads. Other open app tabs pause and reload after completion; close them if a database connection blocks the reset. This does not change Stripe data or undo requests already sent. Retry protections from previous operations are lost. Fresh write request bodies start empty.
+The red **Reset everything** button in the header returns the app to a fresh state. Type **RESET** in the confirmation dialog to permanently erase the saved API key, connection settings, all drafts and request bodies, history, legacy operation keys, and UI preferences. It clears localStorage, sessionStorage, IndexedDB, and Cache Storage for this app’s address, then reloads. Other open app tabs pause and reload after completion; close them if a database connection blocks the reset. This does not change Stripe data or undo requests already sent. Fresh write request bodies start empty.
 
-- Each tab keeps its own selections, drafts, and responses while switching. Form settings, write operation keys, viewer preferences, the selected tab, and divider position persist in this browser’s localStorage; responses do not survive refresh.
+- Reads and Writes keep separate selections and drafts. Read tabs, their forms, and responses persist in IndexedDB. Shared connection settings, write drafts, and write viewer preferences persist in localStorage; write responses do not survive refresh.
 - **Forget** clears the shared API key. Keys and drafts are stored unencrypted locally. Writes pause if their settings cannot be saved.
 - Monaco includes syntax highlighting, folding, search, minimap, word wrap, and copy/download controls. The response can expand; **Escape** exits.
 - The fixed-width sidebar scrolls independently. The footer shows connection state, test/live mode, read/write workspace, latest response status/timing, and saved settings. Green connection status follows a successful request in the current workspace.

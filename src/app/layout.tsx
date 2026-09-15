@@ -4,6 +4,8 @@ import "./writes.css";
 import "./write-history.css";
 import "./reset.css";
 import "./expand-options.css";
+import "./json-conversion.css";
+import "./read-tabs.css";
 
 export const metadata: Metadata = {
   title: "Stripe API Viewer",

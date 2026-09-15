@@ -9,7 +9,6 @@ import {
   ChevronDown,
   LoaderCircle,
   Pencil,
-  RotateCcw,
   Terminal,
 } from "lucide-react";
 import type { StripeResponse } from "@/lib/stripe";
@@ -20,7 +19,6 @@ import {
   prepareWrite,
   writeActions,
   writeEndpoint,
-  writeFingerprintSource,
   writeLabels,
   writeResources,
   type ConnectionSettings,
@@ -40,12 +38,10 @@ import { assertAppNotResetting, isAppResetting } from "@/lib/reset-state";
 const JsonViewer = dynamic(() => import("./json-viewer"), { ssr: false });
 const STORAGE_KEY = "stripe-api-viewer:writes:v1";
 type Draft = { objectId: string; body: string };
-type Attempt = { fingerprint: string; key: string; created: number };
 type WriteSettings = {
   resource: string;
   actions: Record<string, WriteAction>;
   drafts: Record<string, Draft>;
-  attempts: Record<string, Attempt>;
   split: number;
   minimap: boolean;
   wordWrap: boolean;
@@ -57,7 +53,6 @@ const defaults: WriteSettings = {
   resource: "products",
   actions: { products: "create" },
   drafts: {},
-  attempts: {},
   split: 42,
   minimap: true,
   wordWrap: false,
@@ -85,7 +80,6 @@ function restore(raw: string): WriteSettings {
     ...defaults,
     actions: { ...defaults.actions },
     drafts: {},
-    attempts: {},
   } as WriteSettings;
   if (!saved || typeof saved !== "object") return result;
   if (typeof saved.selectedHistoryId === "string")
@@ -107,13 +101,6 @@ function restore(raw: string): WriteSettings {
         typeof draft?.body === "string"
       )
         result.drafts[id] = draft;
-      const attempt = saved.attempts?.[id];
-      if (
-        typeof attempt?.fingerprint === "string" &&
-        typeof attempt?.key === "string" &&
-        typeof attempt?.created === "number"
-      )
-        result.attempts[id] = attempt;
     }
   }
   for (const key of ["minimap", "wordWrap", "fullscreen"] as const)
@@ -156,7 +143,6 @@ export default function WriteWorkspace({
   const lock = useRef(false);
   const executing = useRef(false);
   const storageReadFailed = useRef(false);
-  const operationStarted = useRef(Date.now());
   const restoring = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const editors = useRef<HTMLDivElement>(null);
@@ -169,7 +155,6 @@ export default function WriteWorkspace({
     objectId: "",
     body: "",
   };
-  const attempt = settings.attempts[draftKey];
   let mode: "test" | "live" | null = null;
   try {
     mode = keyMode(connection.apiKey);
@@ -218,7 +203,7 @@ export default function WriteWorkspace({
       setStorageError("");
     } catch {
       setStorageError(
-        "Write settings cannot be saved. Writes are paused to preserve operation keys.",
+        "Write settings cannot be saved. Check browser storage before continuing.",
       );
     }
   }, [settings, ready]);
@@ -281,7 +266,7 @@ export default function WriteWorkspace({
     let failureStatus: number | undefined;
     try {
       // Save the attempt before dispatch. Cancelled dialogs never reach here.
-      history = await saveWriteHistory(input, operationStarted.current);
+      history = await saveWriteHistory(input);
       assertAppNotResetting();
       setSettings((current) => ({
         ...current,
@@ -365,38 +350,11 @@ export default function WriteWorkspace({
         objectId: draft.objectId,
         body: draft.body,
       };
-      // Validate before generating or changing the saved operation key.
-      prepareWrite({ ...base, idempotencyKey: "preview_operation_key" });
-      const hash = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(writeFingerprintSource(base)),
-      );
-      const fingerprint = Array.from(new Uint8Array(hash), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
-      const previous = settings.attempts[draftKey];
-      if (
-        previous?.fingerprint === fingerprint &&
-        Date.now() - previous.created > 23 * 60 * 60_000
-      )
-        throw new Error(
-          "This operation key is over 23 hours old. Check Stripe for the previous result, then choose New operation if you intend another write.",
-        );
-      const nextAttempt =
-        previous?.fingerprint === fingerprint
-          ? previous
-          : { fingerprint, key: crypto.randomUUID(), created: Date.now() };
-      const input: WriteInput = { ...base, idempotencyKey: nextAttempt.key };
-      operationStarted.current = nextAttempt.created;
+      // Fresh on every submit, including loaded history. This ID only binds
+      // the local confirmation flow and is never forwarded to Stripe.
+      const input: WriteInput = { ...base, submissionId: crypto.randomUUID() };
       const prepared = prepareWrite(input);
-      const nextSettings = {
-        ...settings,
-        attempts: { ...settings.attempts, [draftKey]: nextAttempt },
-      };
-      // Persist before touching Stripe, including when a page is refreshed mid-request.
       assertAppNotResetting();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
-      setSettings(nextSettings);
       if (!prepared.needsConfirmation) {
         await execute(input);
         return;
@@ -468,7 +426,6 @@ export default function WriteWorkspace({
           ...current.drafts,
           [key]: { objectId: record.objectId, body: request.body },
         },
-        attempts: { ...current.attempts, [key]: request.operation },
         selectedHistoryId: id,
         fullscreen: false,
       }));
@@ -631,29 +588,11 @@ export default function WriteWorkspace({
             </div>
             <section className="operation-section">
               <div className="operation-heading">
-                <span>Operation key</span>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => {
-                    setSettings((s) => {
-                      const attempts = { ...s.attempts };
-                      delete attempts[draftKey];
-                      return { ...s, attempts, selectedHistoryId: "" };
-                    });
-                    setNotice(
-                      "New operation ready. The next send can create another object.",
-                    );
-                  }}
-                >
-                  <RotateCcw size={12} /> New operation
-                </button>
+                <span>Every submit is a new request</span>
               </div>
-              <code>{attempt?.key || "Generated when you send"}</code>
               <p className="field-hint">
-                Unchanged POST requests reuse this key. Choose New operation
-                only when you intend another write. DELETE requests are not
-                deduplicated by Stripe.
+                Idempotency is off, including for requests loaded from history.
+                Submitting again can create duplicates or repeat charges.
               </p>
             </section>
           </fieldset>
@@ -731,6 +670,7 @@ export default function WriteWorkspace({
               locked={busy || Boolean(pending) || restoringHistory}
               value={draft.body}
               onChange={(value) => updateDraft("body", value)}
+              onNotice={setNotice}
               minimap={settings.minimap}
               wordWrap={settings.wordWrap}
               fullscreen={false}

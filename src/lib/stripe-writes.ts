@@ -11,29 +11,9 @@ export type WriteInput = ConnectionSettings & {
   action: WriteAction;
   objectId: string;
   body: string;
-  idempotencyKey: string;
+  // Local confirmation identity only; never sent to Stripe.
+  submissionId: string;
 };
-
-export function writeFingerprintSource(
-  input: Omit<WriteInput, "idempotencyKey">,
-): string {
-  const value = {
-    ...input,
-    apiKey: input.apiKey.trim(),
-    account: input.account.trim(),
-    apiVersion: input.apiVersion.trim(),
-    objectId: input.action === "create" ? "" : input.objectId.trim(),
-    body: JSON.parse(input.body),
-  };
-  // Formatting and property order do not make a new Stripe operation.
-  return JSON.stringify(value, (_key, child: unknown) =>
-    child && typeof child === "object" && !Array.isArray(child)
-      ? Object.fromEntries(
-          Object.entries(child).sort(([a], [b]) => a.localeCompare(b)),
-        )
-      : child,
-  );
-}
 
 const actions: Record<string, WriteAction[]> = {
   customers: ["create", "update", "delete"],
@@ -148,8 +128,10 @@ export function prepareWrite(input: WriteInput) {
     !/^\d{4}-\d{2}-\d{2}(\.[a-z]+)?$/.test(input.apiVersion.trim())
   )
     throw new Error("Enter a valid Stripe API version.");
-  if (!/^[A-Za-z0-9_-]{16,255}$/.test(input.idempotencyKey))
-    throw new Error("A valid operation key is required.");
+  if (!/^[A-Za-z0-9_-]{16,255}$/.test(input.submissionId))
+    throw new Error(
+      "A valid submission ID is required. Reload the app and try again.",
+    );
   const endpoint = writeEndpoint(input.resource, input.action, input.objectId);
   let body: unknown;
   try {

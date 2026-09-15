@@ -1,4 +1,5 @@
 import { closeWriteHistoryForReset } from "./write-history";
+import { closeReadTabsForReset, READ_TABS_DATABASE } from "./read-tabs";
 
 export const RESET_KEY = "stripe-api-viewer:reset-in-progress";
 
@@ -7,7 +8,8 @@ export const RESET_KEY = "stripe-api-viewer:reset-in-progress";
 export async function resetAppStorage(onBlocked: () => void): Promise<void> {
   localStorage.setItem(RESET_KEY, crypto.randomUUID());
   await closeWriteHistoryForReset();
-  const names = new Set(["stripe-api-viewer-history"]);
+  await closeReadTabsForReset();
+  const names = new Set(["stripe-api-viewer-history", READ_TABS_DATABASE]);
   if (typeof indexedDB.databases === "function") {
     for (const database of await indexedDB.databases()) {
       if (database.name) names.add(database.name);

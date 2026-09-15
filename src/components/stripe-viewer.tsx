@@ -6,12 +6,24 @@ import ResetConfirmation from "./reset-confirmation";
 import { isAppResetting } from "@/lib/reset-state";
 import ExpandOptions from "./expand-options";
 import { restoreExpansions } from "@/lib/expansions";
+import ReadTabs from "./read-tabs";
+import {
+  emptyReadForm,
+  keyFingerprint,
+  loadReadTabs,
+  newReadTab,
+  readFormFrom,
+  saveReadTabs,
+  type ReadTab,
+  type ReadTabsSnapshot,
+} from "@/lib/read-tabs";
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
   type FormEvent,
+  type SetStateAction,
 } from "react";
 import {
   ArrowRight,
@@ -153,44 +165,191 @@ function formatBody(body: string) {
 
 export default function StripeViewer({ onReset }: { onReset: () => void }) {
   const [resetOpen, setResetOpen] = useState(false);
-  const [settings, setSettings] = useState<Settings>(defaults);
+  const [workspace, setWorkspace] = useState(() => ({
+    settings: defaults,
+    tabs: [newReadTab(emptyReadForm(), "initial")],
+    activeId: "initial",
+  }));
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const activeTab = workspace.tabs.find(
+    (tab) => tab.id === workspace.activeId,
+  )!;
+  const settings = { ...workspace.settings, ...activeTab.form };
+  const setSettings = useCallback((action: SetStateAction<Settings>) => {
+    setWorkspace((current) => {
+      const tab = current.tabs.find((tab) => tab.id === current.activeId)!;
+      const merged = { ...current.settings, ...tab.form };
+      const next = typeof action === "function" ? action(merged) : action;
+      const form = readFormFrom(next);
+      const unchanged = (Object.keys(form) as (keyof typeof form)[]).every(
+        (key) => form[key] === tab.form[key],
+      );
+      return {
+        ...current,
+        settings: next,
+        tabs: unchanged
+          ? current.tabs
+          : current.tabs.map((item) =>
+              item.id === tab.id ? { ...item, form } : item,
+            ),
+      };
+    });
+  }, []);
+  const patchTab = useCallback((id: string, patch: Partial<ReadTab>) => {
+    setWorkspace((current) =>
+      current.tabs.some((tab) => tab.id === id)
+        ? {
+            ...current,
+            tabs: current.tabs.map((tab) =>
+              tab.id === id ? { ...tab, ...patch } : tab,
+            ),
+          }
+        : current,
+    );
+  }, []);
+  const setError = useCallback((error: string) => {
+    setWorkspace((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) =>
+        tab.id === current.activeId ? { ...tab, error } : tab,
+      ),
+    }));
+  }, []);
   const [ready, setReady] = useState(false);
+  const [tabsReady, setTabsReady] = useState(false);
+  const [tabsPersisted, setTabsPersisted] = useState(false);
+  const [tabStorageWarning, setTabStorageWarning] = useState("");
+  const [savingTabs, setSavingTabs] = useState(false);
+  const [saveRevision, setSaveRevision] = useState(0);
+  const persistedTabs = useRef<ReadTabsSnapshot | null>(null);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const [currentKeyFingerprint, setCurrentKeyFingerprint] = useState({
+    key: "",
+    fingerprint: "",
+  });
   const [writeStatus, setWriteStatus] = useState(emptyWriteStatus);
   const [storageWarning, setStorageWarning] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [response, setResponse] = useState<StripeResponse | null>(null);
-  const [lastRequest, setLastRequest] = useState<StripeRequest | null>(null);
+  const { busy, error, response } = activeTab;
+  const anyReadsBusy = workspace.tabs.some((tab) => tab.busy);
+  const keyMatches =
+    currentKeyFingerprint.key === settings.apiKey &&
+    Boolean(activeTab.keyFingerprint) &&
+    activeTab.keyFingerprint === currentKeyFingerprint.fingerprint;
+  const lastRequest: StripeRequest | null = activeTab.request
+    ? { ...activeTab.request, apiKey: keyMatches ? settings.apiKey : "" }
+    : null;
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
-  const controller = useRef<AbortController | null>(null);
+  const controllers = useRef(new Map<string, AbortController>());
   const formRef = useRef<HTMLFormElement>(null);
   const responseRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setSettings(readSettings(saved));
-    } catch {
-      setStorageWarning(
-        "Browser storage is unavailable or could not be read. Settings may not persist.",
-      );
-    }
-    setReady(true);
-    return () => controller.current?.abort();
+    let cancelled = false;
+    void (async () => {
+      let restored = defaults;
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) restored = readSettings(saved);
+      } catch {
+        if (!cancelled)
+          setStorageWarning(
+            "Browser storage is unavailable or could not be read. Settings may not persist.",
+          );
+      }
+      const initial = newReadTab(readFormFrom(restored));
+      let snapshot: ReadTabsSnapshot = {
+        tabs: [initial],
+        activeId: initial.id,
+      };
+      try {
+        const saved = await loadReadTabs();
+        if (saved) snapshot = saved;
+        if (cancelled) return;
+        persistedTabs.current = saved;
+        setTabsPersisted(Boolean(saved));
+        setTabsReady(true);
+      } catch (error) {
+        if (cancelled) return;
+        setTabStorageWarning(
+          `Read tabs could not be loaded. Reload to retry; existing tabs have not been overwritten. ${error instanceof Error ? error.message : ""}`,
+        );
+      }
+      if (!cancelled) {
+        setWorkspace({ settings: restored, ...snapshot });
+        setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      for (const controller of controllers.current.values()) controller.abort();
+    };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void keyFingerprint(settings.apiKey)
+      .then((fingerprint) => {
+        if (!cancelled)
+          setCurrentKeyFingerprint({ key: settings.apiKey, fingerprint });
+      })
+      .catch(() => {
+        /* Saved responses remain visible; pagination waits for a verified key match. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.apiKey]);
+
+  useEffect(() => {
+    if (!tabsReady || isAppResetting()) return;
+    let cancelled = false;
+    const snapshot = { tabs: workspace.tabs, activeId: workspace.activeId };
+    setSavingTabs(true);
+    saveQueue.current = saveQueue.current
+      .catch(() => {})
+      .then(async () => {
+        await saveReadTabs(snapshot, persistedTabs.current);
+        persistedTabs.current = snapshot;
+        if (!cancelled) {
+          setTabStorageWarning("");
+          setTabsPersisted(true);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled)
+          setTabStorageWarning(
+            `Read tabs are not saved. ${error instanceof Error ? error.message : "Browser storage is unavailable."} Keep this page open and retry.`,
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setSavingTabs(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace.tabs, workspace.activeId, tabsReady, saveRevision]);
 
   useEffect(() => {
     if (!ready || isAppResetting()) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      // Read forms belong to IndexedDB tabs, not a second stale localStorage copy.
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(
+          tabsPersisted
+            ? { ...workspace.settings, ...emptyReadForm() }
+            : workspace.settings,
+        ),
+      );
     } catch {
       setStorageWarning(
         "Browser storage is unavailable. Your changes cannot be saved.",
       );
     }
-  }, [settings, ready]);
+  }, [workspace.settings, ready, tabsPersisted]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -266,43 +425,58 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
     setError("");
   }
 
-  const runRequest = useCallback(async (input: StripeRequest) => {
-    if (controller.current || isAppResetting()) return;
-    const active = new AbortController();
-    controller.current = active;
-    setBusy(true);
-    setError("");
-    setResponse(null);
-    setLastRequest(input);
-    try {
-      const result = await fetch("/api/stripe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-        signal: active.signal,
-        cache: "no-store",
+  const runRequest = useCallback(
+    async (input: StripeRequest) => {
+      const id = workspaceRef.current.activeId;
+      if (controllers.current.has(id) || isAppResetting()) return;
+      const active = new AbortController();
+      controllers.current.set(id, active);
+      const { apiKey, ...request } = input;
+      patchTab(id, {
+        busy: true,
+        error: "",
+        response: null,
+        request,
+        keyFingerprint: "",
       });
-      const payload = await result.json();
-      if (!result.ok)
-        throw new Error(payload.error || "The request could not be completed.");
-      setResponse(payload as StripeResponse);
-    } catch (error) {
-      if (active.signal.aborted) setError("Request cancelled.");
-      else
-        setError(
-          error instanceof Error
-            ? error.message
-            : "Something went wrong. Try again.",
-        );
-    } finally {
-      controller.current = null;
-      setBusy(false);
-    }
-  }, []);
+      try {
+        const fingerprint = await keyFingerprint(apiKey);
+        if (active.signal.aborted || isAppResetting()) return;
+        patchTab(id, { keyFingerprint: fingerprint });
+        const result = await fetch("/api/stripe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+          signal: active.signal,
+          cache: "no-store",
+        });
+        const payload = await result.json();
+        if (!result.ok)
+          throw new Error(
+            payload.error || "The request could not be completed.",
+          );
+        if (!active.signal.aborted)
+          patchTab(id, { response: payload as StripeResponse });
+      } catch (error) {
+        patchTab(id, {
+          error: active.signal.aborted
+            ? "Request cancelled."
+            : error instanceof Error
+              ? error.message
+              : "Something went wrong. Try again.",
+        });
+      } finally {
+        if (controllers.current.get(id) === active)
+          controllers.current.delete(id);
+        patchTab(id, { busy: false });
+      }
+    },
+    [patchTab],
+  );
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || !ready || settings.workspace !== "reads") return;
+    if (busy || !ready || !tabsReady || settings.workspace !== "reads") return;
     if (!settings.apiKey.trim()) {
       update("connectionExpanded", true);
       setError("Paste your Stripe API key to get started.");
@@ -350,6 +524,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
     statusResponse.status < 300;
   const activeStorageWarning =
     storageWarning ||
+    tabStorageWarning ||
     (settings.workspace === "writes" ? writeStatus.storageWarning : "");
   const sameConnection =
     statusRequest &&
@@ -579,8 +754,45 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
     </section>
   );
   function switchWorkspace(workspace: "reads" | "writes") {
-    if (busy || writeStatus.busy || !ready) return;
+    if (anyReadsBusy || writeStatus.busy || !ready) return;
     setSettings((current) => ({ ...current, workspace, fullscreen: false }));
+  }
+
+  function selectReadTab(id: string) {
+    setWorkspace((current) => ({ ...current, activeId: id }));
+    setCopied(false);
+  }
+  function addReadTab() {
+    if (!tabsReady) return;
+    const tab = newReadTab();
+    setWorkspace((current) => ({
+      ...current,
+      tabs: [...current.tabs, tab],
+      activeId: tab.id,
+    }));
+    setCopied(false);
+  }
+  function closeReadTab(id: string) {
+    if (!tabsReady) return;
+    controllers.current.get(id)?.abort();
+    controllers.current.delete(id);
+    // Create a blank replacement before the state updater (which React may replay).
+    const replacement = newReadTab();
+    setWorkspace((current) => {
+      const index = current.tabs.findIndex((tab) => tab.id === id);
+      if (index < 0) return current;
+      const remaining = current.tabs.filter((tab) => tab.id !== id);
+      const tabs = remaining.length ? remaining : [replacement];
+      const activeId =
+        current.activeId === id
+          ? tabs[Math.min(index, tabs.length - 1)].id
+          : current.activeId;
+      return { ...current, tabs, activeId };
+    });
+    setCopied(false);
+    setNotice(
+      "Tab closed. Its saved request and response are removed when the save completes.",
+    );
   }
 
   return (
@@ -614,7 +826,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
             aria-controls="reads-panel"
             aria-selected={settings.workspace === "reads"}
             tabIndex={settings.workspace === "reads" ? 0 : -1}
-            disabled={!ready || busy || writeStatus.busy}
+            disabled={!ready || anyReadsBusy || writeStatus.busy}
             onClick={() => switchWorkspace("reads")}
           >
             Reads
@@ -626,7 +838,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
             aria-controls="writes-panel"
             aria-selected={settings.workspace === "writes"}
             tabIndex={settings.workspace === "writes" ? 0 : -1}
-            disabled={!ready || busy || writeStatus.busy}
+            disabled={!ready || anyReadsBusy || writeStatus.busy}
             onClick={() => switchWorkspace("writes")}
           >
             Writes
@@ -636,7 +848,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
           <button
             type="button"
             className="reset-everything-button"
-            disabled={!ready || busy || writeStatus.busy}
+            disabled={!ready || anyReadsBusy || writeStatus.busy}
             title="Permanently erase all local app data and start fresh"
             onClick={() => setResetOpen(true)}
           >
@@ -692,7 +904,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
               <span className="get-badge">GET ONLY</span>
             </div>
             <form ref={formRef} onSubmit={submit}>
-              <fieldset disabled={!ready || busy}>
+              <fieldset disabled={!ready || !tabsReady || busy}>
                 {settings.workspace === "reads" && connectionPanel}
 
                 <section className="form-section endpoint-section">
@@ -880,7 +1092,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
                 <button
                   type="button"
                   className="cancel-button"
-                  onClick={() => controller.current?.abort()}
+                  onClick={() => controllers.current.get(activeTab.id)?.abort()}
                 >
                   Cancel request
                 </button>
@@ -903,6 +1115,22 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
                 {storageWarning}
               </div>
             )}
+            {tabStorageWarning && (
+              <div role="alert" className="storage-warning">
+                {tabStorageWarning}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() =>
+                    tabsReady
+                      ? setSaveRevision((value) => value + 1)
+                      : window.location.reload()
+                  }
+                >
+                  {tabsReady ? "Retry saving tabs" : "Reload tabs"}
+                </button>
+              </div>
+            )}
           </aside>
 
           <section
@@ -911,120 +1139,136 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
             aria-label="API response"
             className={`response-panel ${settings.fullscreen ? "expanded" : ""}`}
           >
-            <div className="response-heading">
-              <div className="response-title">
-                <Terminal size={17} />
-                <h2>Response</h2>
-                {busy ? (
-                  <span className="response-state">
-                    <LoaderCircle size={12} className="spin" /> Request in
-                    progress
-                  </span>
-                ) : response ? (
-                  <span
-                    className={`response-state ${isSuccess ? "success" : "failed"}`}
-                  >
-                    <i />
-                    {response.status}{" "}
-                    {response.statusText || (isSuccess ? "OK" : "Error")}
-                  </span>
-                ) : (
-                  <span className="response-state">
-                    <i /> Awaiting request
-                  </span>
-                )}
-              </div>
-              <span className="json-badge">JSON</span>
-            </div>
-            <JsonViewer
-              value={json}
-              minimap={settings.minimap}
-              wordWrap={settings.wordWrap}
-              fullscreen={settings.fullscreen}
-              copied={copied}
-              onToggle={(key) => update(key, !settings[key])}
-              onCopy={copyJson}
-              onDownload={downloadJson}
+            <ReadTabs
+              tabs={workspace.tabs}
+              activeId={workspace.activeId}
+              disabled={!ready || !tabsReady}
+              onSelect={selectReadTab}
+              onAdd={addReadTab}
+              onClose={closeReadTab}
             />
-            {busy && (
-              <div className="request-progress">
-                <LoaderCircle className="spin" size={18} />
-                <span>Fetching your Stripe data…</span>
-              </div>
-            )}
-            <div className="editor-status">
-              <div>
-                <span className="status-dot" />
-                {response ? (
-                  <>
-                    <span>{response.duration.toLocaleString()} ms</span>
-                    <span className="status-separator">·</span>
-                    <span>
-                      {(new Blob([response.body]).size / 1024).toFixed(1)} KB
+            <div
+              id="read-response-panel"
+              role="tabpanel"
+              aria-labelledby={`read-tab-${activeTab.id}`}
+              className="read-tab-panel"
+            >
+              <div className="response-heading">
+                <div className="response-title">
+                  <Terminal size={17} />
+                  <h2>Response</h2>
+                  {busy ? (
+                    <span className="response-state">
+                      <LoaderCircle size={12} className="spin" /> Request in
+                      progress
                     </span>
-                    {objectCount !== null && (
-                      <>
-                        <span className="status-separator">·</span>
-                        <span>{objectCount} objects</span>
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <span>Ready when you are</span>
-                )}
-              </div>
-              <span>
-                <LockKeyhole size={11} /> Read only{" "}
-                <span className="status-separator">·</span> UTF-8
-              </span>
-            </div>
-            {response && (
-              <div className="response-details">
-                <div>
-                  <code title={response.path}>GET {response.path}</code>
-                  {response.requestId && (
-                    <span>Request ID: {response.requestId}</span>
-                  )}
-                  {response.apiVersion && (
-                    <span>API version: {response.apiVersion}</span>
+                  ) : response ? (
+                    <span
+                      className={`response-state ${isSuccess ? "success" : "failed"}`}
+                    >
+                      <i />
+                      {response.status}{" "}
+                      {response.statusText || (isSuccess ? "OK" : "Error")}
+                    </span>
+                  ) : (
+                    <span className="response-state">
+                      <i /> Awaiting request
+                    </span>
                   )}
                 </div>
-                {nextCursor && (
-                  <button
-                    type="button"
-                    className="next-page"
-                    disabled={!requestUnchanged || busy || !isSuccess}
-                    onClick={nextPage}
-                    title={
-                      !requestUnchanged
-                        ? "Send the changed request before loading another page"
-                        : "Fetch the next page"
-                    }
-                  >
-                    Next page <ArrowRight size={13} />
-                  </button>
-                )}
-                {draft.cursor && method !== "retrieve" && (
-                  <button
-                    type="button"
-                    className="first-page"
-                    disabled={busy}
-                    onClick={() => {
-                      updateDraft("cursor", "");
-                      void runRequest({ ...currentRequest, cursor: "" });
-                    }}
-                  >
-                    <RotateCcw size={12} /> First page
-                  </button>
-                )}
+                <span className="json-badge">JSON</span>
               </div>
-            )}
-            <div className="sr-only" role="status" aria-live="polite">
-              {busy
-                ? "Sending request to Stripe."
-                : response
-                  ? `Response received: ${response.status}. ${objectCount !== null ? `${objectCount} objects.` : ""}`
-                  : "Ready for a request."}
+              <JsonViewer
+                key={activeTab.id}
+                value={json}
+                minimap={settings.minimap}
+                wordWrap={settings.wordWrap}
+                fullscreen={settings.fullscreen}
+                copied={copied}
+                onToggle={(key) => update(key, !settings[key])}
+                onCopy={copyJson}
+                onDownload={downloadJson}
+              />
+              {busy && (
+                <div className="request-progress">
+                  <LoaderCircle className="spin" size={18} />
+                  <span>Fetching your Stripe data…</span>
+                </div>
+              )}
+              <div className="editor-status">
+                <div>
+                  <span className="status-dot" />
+                  {response ? (
+                    <>
+                      <span>{response.duration.toLocaleString()} ms</span>
+                      <span className="status-separator">·</span>
+                      <span>
+                        {(new Blob([response.body]).size / 1024).toFixed(1)} KB
+                      </span>
+                      {objectCount !== null && (
+                        <>
+                          <span className="status-separator">·</span>
+                          <span>{objectCount} objects</span>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <span>Ready when you are</span>
+                  )}
+                </div>
+                <span>
+                  <LockKeyhole size={11} /> Read only{" "}
+                  <span className="status-separator">·</span> UTF-8
+                </span>
+              </div>
+              {response && (
+                <div className="response-details">
+                  <div>
+                    <code title={response.path}>GET {response.path}</code>
+                    {response.requestId && (
+                      <span>Request ID: {response.requestId}</span>
+                    )}
+                    {response.apiVersion && (
+                      <span>API version: {response.apiVersion}</span>
+                    )}
+                  </div>
+                  {nextCursor && (
+                    <button
+                      type="button"
+                      className="next-page"
+                      disabled={!requestUnchanged || busy || !isSuccess}
+                      onClick={nextPage}
+                      title={
+                        !requestUnchanged
+                          ? "Send the changed request before loading another page"
+                          : "Fetch the next page"
+                      }
+                    >
+                      Next page <ArrowRight size={13} />
+                    </button>
+                  )}
+                  {draft.cursor && method !== "retrieve" && (
+                    <button
+                      type="button"
+                      className="first-page"
+                      disabled={busy}
+                      onClick={() => {
+                        updateDraft("cursor", "");
+                        void runRequest({ ...currentRequest, cursor: "" });
+                      }}
+                    >
+                      <RotateCcw size={12} /> First page
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="sr-only" role="status" aria-live="polite">
+                {busy
+                  ? "Sending request to Stripe."
+                  : response
+                    ? `Response received: ${response.status}. ${objectCount !== null ? `${objectCount} objects.` : ""}`
+                    : "Ready for a request."}
+              </div>
             </div>
           </section>
         </div>
@@ -1114,9 +1358,11 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
             )}
             {activeStorageWarning
               ? "Settings not saved"
-              : ready
-                ? "Settings saved"
-                : "Loading settings"}
+              : savingTabs
+                ? "Saving read tabs…"
+                : ready
+                  ? "Settings saved"
+                  : "Loading settings"}
           </span>
         </div>
       </footer>
