@@ -1,5 +1,5 @@
-import StripeViewer from "@/components/stripe-viewer";
+import AppReset from "@/components/app-reset";
 
 export default function Home() {
-  return <StripeViewer />;
+  return <AppReset />;
 }

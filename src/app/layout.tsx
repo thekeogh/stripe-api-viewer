@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./writes.css";
+import "./write-history.css";
+import "./reset.css";
+import "./expand-options.css";
 
 export const metadata: Metadata = {
   title: "Stripe API Viewer",

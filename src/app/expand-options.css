@@ -1,0 +1,78 @@
+.expand-section {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.expand-toggle {
+  color: #655373;
+  font-weight: 550;
+}
+.expand-count {
+  margin-left: auto;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: #897799;
+  background: #f1ecf7;
+  font-size: 10px;
+  font-weight: 500;
+}
+.expand-toggle > svg:last-child {
+  margin-left: 0;
+}
+.expand-fields {
+  padding: 0 22px 20px;
+  animation: appear 0.2s ease-out;
+}
+.expand-fields > .field-hint:first-child {
+  margin: 0 0 13px;
+}
+.expand-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.expand-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.expand-row input {
+  min-width: 0;
+  height: 38px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.expand-row input[aria-invalid="true"] {
+  border-color: #ce8699;
+}
+.expand-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #a08096;
+}
+.expand-remove:hover:enabled {
+  color: #ae4c68;
+  background: #fcecf1;
+}
+.expand-add {
+  padding: 8px 0;
+  margin-top: 4px;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: #80619c;
+  font-size: 12px;
+}
+.expand-add:hover:enabled {
+  color: #5c3d7a;
+}
+.expand-error {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: #ac506a;
+  line-height: 1.6;
+}

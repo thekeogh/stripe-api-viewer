@@ -2,6 +2,10 @@
 
 import dynamic from "next/dynamic";
 import WriteWorkspace, { emptyWriteStatus } from "./write-workspace";
+import ResetConfirmation from "./reset-confirmation";
+import { isAppResetting } from "@/lib/reset-state";
+import ExpandOptions from "./expand-options";
+import { restoreExpansions } from "@/lib/expansions";
 import {
   useCallback,
   useEffect,
@@ -19,6 +23,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  History,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
@@ -49,7 +54,7 @@ const emptyDraft = {
   query: "",
   limit: "10",
   cursor: "",
-  parameters: "",
+  expand: [] as string[],
 };
 type Draft = typeof emptyDraft;
 type Settings = {
@@ -62,9 +67,11 @@ type Settings = {
   drafts: Record<string, Draft>;
   connectionExpanded: boolean;
   advanced: boolean;
+  expandOpen: boolean;
   minimap: boolean;
   wordWrap: boolean;
   fullscreen: boolean;
+  historyOpen: boolean;
 };
 const defaults: Settings = {
   workspace: "reads",
@@ -76,9 +83,11 @@ const defaults: Settings = {
   drafts: {},
   connectionExpanded: true,
   advanced: false,
+  expandOpen: false,
   minimap: true,
   wordWrap: false,
   fullscreen: false,
+  historyOpen: false,
 };
 
 function readSettings(raw: string): Settings {
@@ -92,9 +101,11 @@ function readSettings(raw: string): Settings {
   for (const key of [
     "connectionExpanded",
     "advanced",
+    "expandOpen",
     "minimap",
     "wordWrap",
     "fullscreen",
+    "historyOpen",
   ] as const) {
     if (typeof data[key] === "boolean") settings[key] = data[key];
   }
@@ -119,10 +130,12 @@ function readSettings(raw: string): Settings {
       const saved = (data.drafts as Record<string, unknown> | undefined)?.[key];
       if (saved && typeof saved === "object") {
         const draft = { ...emptyDraft };
-        for (const field of Object.keys(emptyDraft) as (keyof Draft)[]) {
+        for (const field of ["objectId", "query", "limit", "cursor"] as const) {
           const value = (saved as Record<string, unknown>)[field];
           if (typeof value === "string") draft[field] = value;
         }
+        const oldDraft = saved as Record<string, unknown>;
+        draft.expand = restoreExpansions(oldDraft.expand, oldDraft.parameters);
         settings.drafts[key] = draft;
       }
     }
@@ -138,7 +151,8 @@ function formatBody(body: string) {
   }
 }
 
-export default function StripeViewer() {
+export default function StripeViewer({ onReset }: { onReset: () => void }) {
+  const [resetOpen, setResetOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(defaults);
   const [ready, setReady] = useState(false);
   const [writeStatus, setWriteStatus] = useState(emptyWriteStatus);
@@ -168,7 +182,7 @@ export default function StripeViewer() {
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || isAppResetting()) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     } catch {
@@ -238,7 +252,7 @@ export default function StripeViewer() {
     setSettings((current) => ({ ...current, [key]: value }));
     setError("");
   }
-  function updateDraft(key: keyof Draft, value: string) {
+  function updateDraft<K extends keyof Draft>(key: K, value: Draft[K]) {
     setSettings((current) => ({
       ...current,
       drafts: {
@@ -253,7 +267,7 @@ export default function StripeViewer() {
   }
 
   const runRequest = useCallback(async (input: StripeRequest) => {
-    if (controller.current) return;
+    if (controller.current || isAppResetting()) return;
     const active = new AbortController();
     controller.current = active;
     setBusy(true);
@@ -557,31 +571,6 @@ export default function StripeViewer() {
                   placeholder="Your account’s default version"
                   spellCheck={false}
                 />
-                {settings.workspace === "reads" && method && (
-                  <>
-                    <label htmlFor="parameters">
-                      Additional parameters <CircleHelp size={13} />
-                    </label>
-                    <textarea
-                      id="parameters"
-                      value={draft.parameters}
-                      onChange={(e) =>
-                        updateDraft("parameters", e.target.value)
-                      }
-                      placeholder={
-                        method === "retrieve"
-                          ? "expand[]=customer"
-                          : "customer=cus_…\nexpand[]=data.customer"
-                      }
-                      rows={3}
-                      spellCheck={false}
-                    />
-                    <p className="field-hint">
-                      One key=value per line, without URL encoding. Use
-                      parameters supported by this endpoint.
-                    </p>
-                  </>
-                )}
               </div>
             )}
           </section>
@@ -644,6 +633,30 @@ export default function StripeViewer() {
           </button>
         </nav>
         <div className="topbar-right">
+          <button
+            type="button"
+            className="reset-everything-button"
+            disabled={!ready || busy || writeStatus.busy}
+            title="Permanently erase all local app data and start fresh"
+            onClick={() => setResetOpen(true)}
+          >
+            <RotateCcw size={16} /> Reset everything
+          </button>
+          {settings.workspace === "writes" && (
+            <button
+              id="write-history-toggle"
+              type="button"
+              className="history-toggle"
+              aria-label="Write history"
+              aria-expanded={settings.historyOpen}
+              aria-controls="write-history"
+              disabled={!ready}
+              onClick={() => update("historyOpen", !settings.historyOpen)}
+            >
+              <History size={16} />
+              <span>History</span>
+            </button>
+          )}
           <span className="readonly-pill">
             <ShieldCheck size={14} />{" "}
             {settings.workspace === "reads"
@@ -825,6 +838,17 @@ export default function StripeViewer() {
                     </a>
                   )}
                 </section>
+
+                {resource && method && (
+                  <ExpandOptions
+                    key={draftKey}
+                    values={draft.expand}
+                    open={settings.expandOpen}
+                    method={method}
+                    onChange={(values) => updateDraft("expand", values)}
+                    onToggle={() => update("expandOpen", !settings.expandOpen)}
+                  />
+                )}
 
                 <div className="submit-section">
                   <div className="request-preview">
@@ -1016,6 +1040,14 @@ export default function StripeViewer() {
           }
           onMissingKey={() => update("connectionExpanded", true)}
           onStatus={setWriteStatus}
+          historyOpen={settings.historyOpen}
+          onCloseHistory={() => {
+            update("historyOpen", false);
+            document.getElementById("write-history-toggle")?.focus();
+          }}
+          onRestoreConnection={(connection) =>
+            setSettings((current) => ({ ...current, ...connection }))
+          }
         />
       </main>
       <footer className="footer" aria-label="Workspace status">
@@ -1088,6 +1120,12 @@ export default function StripeViewer() {
           </span>
         </div>
       </footer>
+      {resetOpen && (
+        <ResetConfirmation
+          onCancel={() => setResetOpen(false)}
+          onConfirm={onReset}
+        />
+      )}
       {(copied || notice) && (
         <div className="toast" role="status">
           {copied && <Check size={15} />}

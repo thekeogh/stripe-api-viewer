@@ -1,3 +1,5 @@
+import { normalizeExpansions } from "./expansions";
+
 export type Method = "list" | "retrieve" | "search";
 
 type Resource = {
@@ -153,7 +155,7 @@ export type RequestFields = {
   query: string;
   limit: string;
   cursor: string;
-  parameters: string;
+  expand: string[];
 };
 
 export type StripeRequest = RequestFields & {
@@ -210,28 +212,7 @@ export function buildStripePath(fields: RequestFields): string {
     }
   }
 
-  const reserved = new Set([
-    "limit",
-    "query",
-    "page",
-    "starting_after",
-    "ending_before",
-    "api_key",
-  ]);
-  for (const line of fields.parameters.split("\n")) {
-    if (!line.trim()) continue;
-    const separator = line.indexOf("=");
-    if (separator < 1)
-      throw new Error("Use one key=value per line for additional parameters.");
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (!/^[a-zA-Z0-9_\[\]]+$/.test(key))
-      throw new Error(`Invalid parameter name: ${key}`);
-    if (reserved.has(key))
-      throw new Error(
-        `Use the dedicated controls for ${key}; it cannot be an additional parameter.`,
-      );
-    params.append(key, value);
-  }
+  for (const path of normalizeExpansions(fields.expand))
+    params.append("expand[]", path);
   return params.size ? `${path}?${params.toString()}` : path;
 }

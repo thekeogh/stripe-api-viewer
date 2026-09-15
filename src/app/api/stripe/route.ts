@@ -31,10 +31,13 @@ export async function POST(request: NextRequest) {
       "query",
       "limit",
       "cursor",
-      "parameters",
     ];
     if (required.some((key) => typeof data[key] !== "string"))
       throw new Error("Invalid request fields.");
+    if (data.parameters !== undefined && data.parameters !== "")
+      throw new Error(
+        "Additional parameters are no longer supported. Use Expand options instead.",
+      );
     input = data as StripeRequest;
     input.apiKey = input.apiKey.trim();
     if (!/^(sk|rk)_(test|live)_[A-Za-z0-9]+$/.test(input.apiKey)) {

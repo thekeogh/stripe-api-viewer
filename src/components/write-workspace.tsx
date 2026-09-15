@@ -28,6 +28,14 @@ import {
   type WriteInput,
 } from "@/lib/stripe-writes";
 import WriteConfirmation, { type PendingWrite } from "./write-confirmation";
+import WriteHistory from "./write-history";
+import {
+  saveWriteHistory,
+  finishWriteHistory,
+  loadWriteHistory,
+  type HistoryRecord,
+} from "@/lib/write-history";
+import { assertAppNotResetting, isAppResetting } from "@/lib/reset-state";
 
 const JsonViewer = dynamic(() => import("./json-viewer"), { ssr: false });
 const STORAGE_KEY = "stripe-api-viewer:writes:v1";
@@ -42,6 +50,8 @@ type WriteSettings = {
   minimap: boolean;
   wordWrap: boolean;
   fullscreen: boolean;
+  selectedHistoryId: string;
+  historyCollapsed: string[];
 };
 const defaults: WriteSettings = {
   resource: "products",
@@ -52,6 +62,8 @@ const defaults: WriteSettings = {
   minimap: true,
   wordWrap: false,
   fullscreen: false,
+  selectedHistoryId: "",
+  historyCollapsed: [],
 };
 export type WriteStatus = {
   busy: boolean;
@@ -76,6 +88,12 @@ function restore(raw: string): WriteSettings {
     attempts: {},
   } as WriteSettings;
   if (!saved || typeof saved !== "object") return result;
+  if (typeof saved.selectedHistoryId === "string")
+    result.selectedHistoryId = saved.selectedHistoryId;
+  if (Array.isArray(saved.historyCollapsed))
+    result.historyCollapsed = saved.historyCollapsed.filter((id: unknown) =>
+      writeResources.some((resource) => resource.id === id),
+    );
   if (writeResources.some((r) => r.id === saved.resource))
     result.resource = saved.resource;
   for (const resource of writeResources) {
@@ -111,12 +129,20 @@ export default function WriteWorkspace({
   connectionPanel,
   onMissingKey,
   onStatus,
+  historyOpen,
+  onCloseHistory,
+  onRestoreConnection,
 }: {
   active: boolean;
   connection: ConnectionSettings;
   connectionPanel: ReactNode;
   onMissingKey: () => void;
   onStatus: (status: WriteStatus) => void;
+  historyOpen: boolean;
+  onCloseHistory: () => void;
+  onRestoreConnection: (
+    connection: Pick<ConnectionSettings, "account" | "apiVersion">,
+  ) => void;
 }) {
   const [settings, setSettings] = useState(defaults);
   const [ready, setReady] = useState(false);
@@ -125,9 +151,13 @@ export default function WriteWorkspace({
   const [pending, setPending] = useState<PendingWrite | null>(null);
   const [copied, setCopied] = useState<"body" | "response" | null>(null);
   const [notice, setNotice] = useState("");
+  const [historyWarning, setHistoryWarning] = useState("");
+  const [restoringHistory, setRestoringHistory] = useState(false);
   const lock = useRef(false);
   const executing = useRef(false);
   const storageReadFailed = useRef(false);
+  const operationStarted = useRef(Date.now());
+  const restoring = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const editors = useRef<HTMLDivElement>(null);
   const responsePanel = useRef<HTMLElement>(null);
@@ -137,7 +167,7 @@ export default function WriteWorkspace({
   const draftKey = `${resource.id}:${action}`;
   const draft = settings.drafts[draftKey] ?? {
     objectId: "",
-    body: exampleBody(resource.id, action),
+    body: "",
   };
   const attempt = settings.attempts[draftKey];
   let mode: "test" | "live" | null = null;
@@ -182,7 +212,7 @@ export default function WriteWorkspace({
     setReady(true);
   }, []);
   useEffect(() => {
-    if (!ready || storageReadFailed.current) return;
+    if (!ready || storageReadFailed.current || isAppResetting()) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
       setStorageError("");
@@ -193,14 +223,24 @@ export default function WriteWorkspace({
     }
   }, [settings, ready]);
   useEffect(() => {
-    onStatus({ ...status, storageWarning: storageError });
-  }, [status, storageError, onStatus]);
+    onStatus({
+      ...status,
+      busy: status.busy || restoringHistory,
+      storageWarning: storageError,
+    });
+  }, [status, storageError, restoringHistory, onStatus]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!active) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("#write-history")
+      )
+        return;
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
-        if (!pending && !lock.current) form.current?.requestSubmit();
+        if (!pending && !lock.current && !restoring.current)
+          form.current?.requestSubmit();
       }
       if (event.key === "Escape" && !pending)
         setSettings((s) => ({ ...s, fullscreen: false }));
@@ -223,6 +263,7 @@ export default function WriteWorkspace({
   function updateDraft(key: keyof Draft, value: string) {
     setSettings((s) => ({
       ...s,
+      selectedHistoryId: "",
       drafts: { ...s.drafts, [draftKey]: { ...draft, [key]: value } },
     }));
   }
@@ -235,7 +276,17 @@ export default function WriteWorkspace({
     executing.current = true;
     setPending(null);
     setStatus({ busy: true, response: null, error: "", request: input });
+    setHistoryWarning("");
+    let history: HistoryRecord | undefined;
+    let failureStatus: number | undefined;
     try {
+      // Save the attempt before dispatch. Cancelled dialogs never reach here.
+      history = await saveWriteHistory(input, operationStarted.current);
+      assertAppNotResetting();
+      setSettings((current) => ({
+        ...current,
+        selectedHistoryId: history!.id,
+      }));
       const result = await fetch("/api/stripe/write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -248,17 +299,42 @@ export default function WriteWorkspace({
           confirmed: Boolean(token),
         }),
       });
+      if (!result.ok) failureStatus = result.status;
       const payload = await result.json();
       if (!result.ok)
         throw new Error(payload.error || "The write could not be completed.");
       setStatus({ busy: false, response: payload, error: "", request: input });
+      await finishWriteHistory(history.id, {
+        outcome:
+          payload.status >= 200 && payload.status < 300 ? "success" : "error",
+        status: payload.status,
+        requestId: payload.requestId,
+      }).catch(() =>
+        setHistoryWarning(
+          "The write finished, but its history result could not be updated. The saved request is still available.",
+        ),
+      );
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Request failed.";
       setStatus({
         busy: false,
         response: null,
-        error: `${error instanceof Error ? error.message : "Request failed."} No automatic retry was made.`,
+        error: history
+          ? `${message} No automatic retry was made.`
+          : `Request not sent: write history could not be saved. ${message}`,
         request: input,
       });
+      if (history)
+        await finishWriteHistory(history.id, {
+          outcome: failureStatus && failureStatus < 500 ? "error" : "unknown",
+          status: failureStatus,
+          error: message,
+        }).catch(() =>
+          setHistoryWarning(
+            "The request is saved, but its result could not be recorded. Check Stripe before retrying.",
+          ),
+        );
     } finally {
       lock.current = false;
       executing.current = false;
@@ -266,7 +342,15 @@ export default function WriteWorkspace({
   }
 
   async function submit() {
-    if (!ready || !active || lock.current || pending || storageError) return;
+    if (
+      !ready ||
+      !active ||
+      lock.current ||
+      pending ||
+      storageError ||
+      restoring.current
+    )
+      return;
     lock.current = true;
     setStatus((s) => ({ ...s, busy: true, error: "" }));
     try {
@@ -303,12 +387,14 @@ export default function WriteWorkspace({
           ? previous
           : { fingerprint, key: crypto.randomUUID(), created: Date.now() };
       const input: WriteInput = { ...base, idempotencyKey: nextAttempt.key };
+      operationStarted.current = nextAttempt.created;
       const prepared = prepareWrite(input);
       const nextSettings = {
         ...settings,
         attempts: { ...settings.attempts, [draftKey]: nextAttempt },
       };
       // Persist before touching Stripe, including when a page is refreshed mid-request.
+      assertAppNotResetting();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
       setSettings(nextSettings);
       if (!prepared.needsConfirmation) {
@@ -365,9 +451,48 @@ export default function WriteWorkspace({
     setSettings((s) => ({ ...s, split: Math.max(20, Math.min(75, value)) }));
   }
 
+  async function restoreHistory(id: string) {
+    if (lock.current || pending || restoring.current) return;
+    restoring.current = true;
+    setRestoringHistory(true);
+    try {
+      const { record, request } = await loadWriteHistory(id);
+      if (!writeActions(record.resource).includes(record.action))
+        throw new Error("This saved write action is no longer supported.");
+      const key = `${record.resource}:${record.action}`;
+      setSettings((current) => ({
+        ...current,
+        resource: record.resource,
+        actions: { ...current.actions, [record.resource]: record.action },
+        drafts: {
+          ...current.drafts,
+          [key]: { objectId: record.objectId, body: request.body },
+        },
+        attempts: { ...current.attempts, [key]: request.operation },
+        selectedHistoryId: id,
+        fullscreen: false,
+      }));
+      onRestoreConnection({
+        account: request.account,
+        apiVersion: request.apiVersion,
+      });
+      setStatus(emptyWriteStatus);
+      setNotice(
+        `Loaded “${record.name}”. Nothing sent.${mode !== record.mode ? ` Originally ${record.mode} mode; your current API key is unchanged.` : ""}`,
+      );
+    } catch (error) {
+      setHistoryWarning(
+        error instanceof Error ? error.message : "Could not load this request.",
+      );
+    } finally {
+      restoring.current = false;
+      setRestoringHistory(false);
+    }
+  }
+
   return (
     <div
-      className="workspace write-workspace"
+      className={`workspace write-workspace ${historyOpen ? "history-open" : ""}`}
       id="writes-panel"
       role="tabpanel"
       aria-labelledby="writes-tab"
@@ -386,7 +511,9 @@ export default function WriteWorkspace({
             void submit();
           }}
         >
-          <fieldset disabled={!ready || busy || Boolean(pending)}>
+          <fieldset
+            disabled={!ready || busy || Boolean(pending) || restoringHistory}
+          >
             {connectionPanel}
             <section className="form-section endpoint-section">
               <div className="section-label">
@@ -398,7 +525,11 @@ export default function WriteWorkspace({
                   id="write-resource"
                   value={resource.id}
                   onChange={(event) =>
-                    setSettings((s) => ({ ...s, resource: event.target.value }))
+                    setSettings((s) => ({
+                      ...s,
+                      selectedHistoryId: "",
+                      resource: event.target.value,
+                    }))
                   }
                 >
                   {writeResources.map((r) => (
@@ -417,6 +548,7 @@ export default function WriteWorkspace({
                   onChange={(event) =>
                     setSettings((s) => ({
                       ...s,
+                      selectedHistoryId: "",
                       actions: {
                         ...s.actions,
                         [resource.id]: event.target.value as WriteAction,
@@ -507,7 +639,7 @@ export default function WriteWorkspace({
                     setSettings((s) => {
                       const attempts = { ...s.attempts };
                       delete attempts[draftKey];
-                      return { ...s, attempts };
+                      return { ...s, attempts, selectedHistoryId: "" };
                     });
                     setNotice(
                       "New operation ready. The next send can create another object.",
@@ -534,6 +666,18 @@ export default function WriteWorkspace({
         {storageError && (
           <div className="storage-warning" role="alert">
             {storageError}
+          </div>
+        )}
+        {historyWarning && (
+          <div className="storage-warning" role="alert">
+            {historyWarning}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setHistoryWarning("")}
+            >
+              Dismiss
+            </button>
           </div>
         )}
       </aside>
@@ -566,13 +710,25 @@ export default function WriteWorkspace({
                 <Pencil size={16} />
                 <h2>Request body</h2>
               </div>
+              {!draft.body && (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={busy || Boolean(pending) || restoringHistory}
+                  onClick={() =>
+                    updateDraft("body", exampleBody(resource.id, action))
+                  }
+                >
+                  Load example
+                </button>
+              )}
               <span className="json-badge">
                 {busy || pending ? "LOCKED" : "EDITABLE JSON"}
               </span>
             </div>
             <JsonViewer
               editable
-              locked={busy || Boolean(pending)}
+              locked={busy || Boolean(pending) || restoringHistory}
               value={draft.body}
               onChange={(value) => updateDraft("body", value)}
               minimap={settings.minimap}
@@ -668,6 +824,37 @@ export default function WriteWorkspace({
           </section>
         </div>
       </div>
+      <WriteHistory
+        open={historyOpen}
+        active={active}
+        selectedId={settings.selectedHistoryId}
+        collapsed={settings.historyCollapsed}
+        disabled={busy || Boolean(pending) || restoringHistory}
+        onClose={onCloseHistory}
+        onSelect={(id) => void restoreHistory(id)}
+        onDeleted={(id) => {
+          setSettings((current) => ({
+            ...current,
+            selectedHistoryId:
+              id === null || current.selectedHistoryId === id
+                ? ""
+                : current.selectedHistoryId,
+          }));
+          setNotice(
+            id === null
+              ? "All saved write history deleted."
+              : "Saved request deleted.",
+          );
+        }}
+        onToggleGroup={(resource) =>
+          setSettings((current) => ({
+            ...current,
+            historyCollapsed: current.historyCollapsed.includes(resource)
+              ? current.historyCollapsed.filter((id) => id !== resource)
+              : [...current.historyCollapsed, resource],
+          }))
+        }
+      />
       {pending && (
         <WriteConfirmation
           pending={pending}

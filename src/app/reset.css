@@ -1,0 +1,60 @@
+.reset-everything-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 10px 15px;
+  border: 1px solid #b72d47;
+  border-radius: 7px;
+  background: #cc3652;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: 0 2px 5px #a9203520;
+}
+.reset-everything-button:hover:enabled {
+  background: #b72943;
+  border-color: #a8223b;
+}
+.reset-everything-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.reset-warning-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b72943;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+}
+.reset-confirmation {
+  max-width: 570px;
+}
+.reset-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #faf7fc;
+  color: #5f4d6d;
+}
+.reset-screen section {
+  max-width: 490px;
+  text-align: center;
+}
+.reset-screen svg {
+  color: #cc3652;
+}
+.reset-screen h1 {
+  margin: 20px 0 12px;
+  font-size: 24px;
+}
+.reset-screen p {
+  line-height: 1.8;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
