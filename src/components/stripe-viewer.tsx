@@ -7,6 +7,7 @@ import { isAppResetting } from "@/lib/reset-state";
 import ExpandOptions from "./expand-options";
 import { restoreExpansions } from "@/lib/expansions";
 import ReadTabs from "./read-tabs";
+import ThemeToggle from "./theme-toggle";
 import {
   emptyReadForm,
   keyFingerprint,
@@ -849,6 +850,7 @@ export default function StripeViewer({
           </button>
         </nav>
         <div className="topbar-right">
+          <ThemeToggle onNotice={setNotice} />
           <button
             type="button"
             className="reset-everything-button"

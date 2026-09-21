@@ -77,6 +77,8 @@ History stores request bodies and result metadata, not response bodies, API keys
 
 ## Workspace
 
+Use the **sun/moon button** in the header to switch between light and dark themes. Your choice is remembered across refreshes and browser restarts; Monaco keeps its dark editor palette in both. Reset everything restores the default light theme.
+
 The red **Reset everything** button in the header returns the app to a fresh state. Type **RESET** to permanently erase connection settings, all drafts and request bodies, history, legacy operation keys, and UI preferences. **Keep API key** is checked every time the dialog opens: only the API key is retained. Uncheck it to delete the key too. The reset clears localStorage (except the retained key), sessionStorage, IndexedDB, and Cache Storage for this app’s address, then reloads. Other open app tabs pause and reload after completion; close them if a database connection blocks the reset. This does not change Stripe data or undo requests already sent. Fresh write request bodies start empty.
 
 - Reads and Writes keep separate selections and drafts. Read tabs, their forms, and responses persist in IndexedDB. Shared connection settings, write drafts, and write viewer preferences persist in localStorage; write responses do not survive refresh.
