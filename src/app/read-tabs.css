@@ -1,10 +1,19 @@
+.editor-toolbar.has-tabs {
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+.editor-toolbar.has-tabs > .editor-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+  min-height: 43px;
+}
 .read-tabs-bar {
   display: flex;
-  flex-shrink: 0;
+  flex: 1 1 220px;
+  min-width: 140px;
   align-items: stretch;
-  min-height: 43px;
-  background: #1d1d2a;
-  border-bottom: 1px solid #363047;
+  min-height: 47px;
+  background: transparent;
 }
 .read-tabs {
   display: flex;
@@ -44,18 +53,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.read-tab-select i {
-  flex-shrink: 0;
-  height: 5px;
-  width: 5px;
-  border-radius: 50%;
-}
-.read-tab-select i.success {
-  background: #82b69b;
-}
-.read-tab-select i.error {
-  background: #d28396;
 }
 .read-tab-close,
 .read-tab-add {

@@ -163,7 +163,11 @@ function formatBody(body: string) {
   }
 }
 
-export default function StripeViewer({ onReset }: { onReset: () => void }) {
+export default function StripeViewer({
+  onReset,
+}: {
+  onReset: (keepApiKey: boolean) => void;
+}) {
   const [resetOpen, setResetOpen] = useState(false);
   const [workspace, setWorkspace] = useState(() => ({
     settings: defaults,
@@ -1139,20 +1143,7 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
             aria-label="API response"
             className={`response-panel ${settings.fullscreen ? "expanded" : ""}`}
           >
-            <ReadTabs
-              tabs={workspace.tabs}
-              activeId={workspace.activeId}
-              disabled={!ready || !tabsReady}
-              onSelect={selectReadTab}
-              onAdd={addReadTab}
-              onClose={closeReadTab}
-            />
-            <div
-              id="read-response-panel"
-              role="tabpanel"
-              aria-labelledby={`read-tab-${activeTab.id}`}
-              className="read-tab-panel"
-            >
+            <div className="read-tab-panel">
               <div className="response-heading">
                 <div className="response-title">
                   <Terminal size={17} />
@@ -1179,7 +1170,19 @@ export default function StripeViewer({ onReset }: { onReset: () => void }) {
                 <span className="json-badge">JSON</span>
               </div>
               <JsonViewer
-                key={activeTab.id}
+                documentKey={activeTab.id}
+                panelId="read-response-panel"
+                panelLabelledBy={`read-tab-${activeTab.id}`}
+                tabs={
+                  <ReadTabs
+                    tabs={workspace.tabs}
+                    activeId={workspace.activeId}
+                    disabled={!ready || !tabsReady}
+                    onSelect={selectReadTab}
+                    onAdd={addReadTab}
+                    onClose={closeReadTab}
+                  />
+                }
                 value={json}
                 minimap={settings.minimap}
                 wordWrap={settings.wordWrap}

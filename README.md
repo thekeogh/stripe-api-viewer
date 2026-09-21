@@ -25,7 +25,7 @@ Reads cover customers, subscriptions, products, prices, coupons, promotion codes
 
 ### Read tabs
 
-Use **+** above the response viewer to open a blank request tab. Each tab remembers its endpoint form, expansions, pagination, viewer preferences, and latest response—including the JSON body and status—across refreshes and browser restarts. The API key, connected account, and API version remain shared. Your existing read form becomes the first tab when upgrading.
+Use **+** in the response editor’s tab bar to open a blank request tab. Tabs and editor tools share one toolbar, directly above the JSON. Each tab remembers its endpoint form, expansions, pagination, viewer preferences, and latest response—including the JSON body and status—across refreshes and browser restarts. The API key, connected account, and API version remain shared. Your existing read form becomes the first tab when upgrading.
 
 Tab labels follow the resource and object ID. Switch tabs to compare responses without sending anything; requests can finish in the background in their original tab. **×** closes a tab and permanently removes its saved form and response. Closing the last tab leaves one blank tab. Use Left/Right or Home/End on the tab bar to switch tabs, and Delete to close one.
 
@@ -77,7 +77,7 @@ History stores request bodies and result metadata, not response bodies, API keys
 
 ## Workspace
 
-The red **Reset everything** button in the header returns the app to a fresh state. Type **RESET** in the confirmation dialog to permanently erase the saved API key, connection settings, all drafts and request bodies, history, legacy operation keys, and UI preferences. It clears localStorage, sessionStorage, IndexedDB, and Cache Storage for this app’s address, then reloads. Other open app tabs pause and reload after completion; close them if a database connection blocks the reset. This does not change Stripe data or undo requests already sent. Fresh write request bodies start empty.
+The red **Reset everything** button in the header returns the app to a fresh state. Type **RESET** to permanently erase connection settings, all drafts and request bodies, history, legacy operation keys, and UI preferences. **Keep API key** is checked every time the dialog opens: only the API key is retained. Uncheck it to delete the key too. The reset clears localStorage (except the retained key), sessionStorage, IndexedDB, and Cache Storage for this app’s address, then reloads. Other open app tabs pause and reload after completion; close them if a database connection blocks the reset. This does not change Stripe data or undo requests already sent. Fresh write request bodies start empty.
 
 - Reads and Writes keep separate selections and drafts. Read tabs, their forms, and responses persist in IndexedDB. Shared connection settings, write drafts, and write viewer preferences persist in localStorage; write responses do not survive refresh.
 - **Forget** clears the shared API key. Keys and drafts are stored unencrypted locally. Writes pause if their settings cannot be saved.

@@ -71,11 +71,6 @@ export default function ReadTabs({
                 <FileJson size={13} />
               )}
               <span>{readTabLabel(tab)}</span>
-              {tab.response && (
-                <i
-                  className={tab.response.status < 300 ? "success" : "error"}
-                />
-              )}
             </button>
             <button
               type="button"

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, RotateCcw } from "lucide-react";
 import StripeViewer from "./stripe-viewer";
-import { RESET_KEY, resetAppStorage } from "@/lib/reset-app";
+import { RESET_KEY, resetAppStorage, resetKeepsApiKey } from "@/lib/reset-app";
 import { closeWriteHistoryForReset } from "@/lib/write-history";
 import { closeReadTabsForReset } from "@/lib/read-tabs";
 
@@ -12,11 +12,13 @@ export default function AppReset() {
     "ready" | "resetting" | "paused" | "error"
   >("ready");
   const [message, setMessage] = useState("");
+  const [keepApiKey, setKeepApiKey] = useState(true);
   const stopped = useRef(false);
   const running = useRef(false);
 
   useEffect(() => {
-    function pause() {
+    function pause(marker: string) {
+      setKeepApiKey(resetKeepsApiKey(marker));
       stopped.current = true;
       void closeWriteHistoryForReset();
       void closeReadTabsForReset();
@@ -27,14 +29,19 @@ export default function AppReset() {
     }
     const listener = (event: StorageEvent) => {
       if (event.storageArea !== localStorage) return;
-      if (event.key === RESET_KEY && event.newValue) pause();
-      if (event.key === null && stopped.current) {
+      if (event.key === RESET_KEY && event.newValue) pause(event.newValue);
+      if (
+        (event.key === null ||
+          (event.key === RESET_KEY && event.newValue === null)) &&
+        stopped.current
+      ) {
         sessionStorage.clear();
         window.location.replace("/");
       }
     };
     try {
-      if (localStorage.getItem(RESET_KEY)) pause();
+      const marker = localStorage.getItem(RESET_KEY);
+      if (marker) pause(marker);
     } catch {
       /* Reset reports storage failures explicitly. */
     }
@@ -46,10 +53,12 @@ export default function AppReset() {
     if (phase !== "resetting" || running.current) return;
     running.current = true;
     stopped.current = true;
-    void resetAppStorage(() =>
-      setMessage(
-        "Close other tabs or windows using this app. Waiting for their database connections to close…",
-      ),
+    void resetAppStorage(
+      () =>
+        setMessage(
+          "Close other tabs or windows using this app. Waiting for their database connections to close…",
+        ),
+      keepApiKey,
     )
       .then(() => window.location.replace("/"))
       .catch((error) => {
@@ -59,10 +68,17 @@ export default function AppReset() {
           `Reset did not finish. Some data may already have been removed. ${error instanceof Error ? error.message : "Browser storage is unavailable."}`,
         );
       });
-  }, [phase]);
+  }, [phase, keepApiKey]);
 
   if (phase === "ready")
-    return <StripeViewer onReset={() => setPhase("resetting")} />;
+    return (
+      <StripeViewer
+        onReset={(keepApiKey) => {
+          setKeepApiKey(keepApiKey);
+          setPhase("resetting");
+        }}
+      />
+    );
   return (
     <main className="reset-screen">
       <section role={phase === "error" ? "alert" : "status"}>

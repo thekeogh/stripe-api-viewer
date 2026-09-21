@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { convertToJson } from "@/lib/convert-json";
 import Editor, { loader, type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
@@ -28,6 +28,10 @@ type Props = {
   copied: boolean;
   editable?: boolean;
   locked?: boolean;
+  tabs?: ReactNode;
+  documentKey?: string;
+  panelId?: string;
+  panelLabelledBy?: string;
   onChange?: (value: string) => void;
   onNotice?: (message: string) => void;
   onToggle: (key: "minimap" | "wordWrap" | "fullscreen") => void;
@@ -110,12 +114,14 @@ export default function JsonViewer(props: Props) {
 
   return (
     <>
-      <div className="editor-toolbar">
-        <div className="file-tab">
-          <span className="json-symbol">{"{ }"}</span>{" "}
-          {props.editable ? "request.json" : "response.json"}{" "}
-          <span className="tab-dot" />
-        </div>
+      <div className={`editor-toolbar${props.tabs ? " has-tabs" : ""}`}>
+        {props.tabs ?? (
+          <div className="file-tab">
+            <span className="json-symbol">{"{ }"}</span>{" "}
+            {props.editable ? "request.json" : "response.json"}{" "}
+            <span className="tab-dot" />
+          </div>
+        )}
         <div className="editor-actions">
           {props.editable && (
             <button
@@ -225,9 +231,15 @@ export default function JsonViewer(props: Props) {
           {conversionError.message} Your text has not changed.
         </div>
       )}
-      <div className="editor-content">
+      <div
+        className="editor-content"
+        id={props.panelId}
+        role={props.panelId ? "tabpanel" : undefined}
+        aria-labelledby={props.panelLabelledBy}
+      >
         {props.value || props.editable ? (
           <Editor
+            key={props.documentKey}
             height="100%"
             language="json"
             value={props.value}
